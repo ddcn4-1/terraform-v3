@@ -69,41 +69,10 @@ jobs:
             fs.appendFileSync(process.env.GITHUB_ENV, `JIRA_KEY=${jiraKey}\n`);
             fs.appendFileSync(process.env.GITHUB_ENV, `CLEAN_TITLE=${cleanTitle}\n`);
 
-      - name: Update Jira issue title
+      - name: Skip Jira issue title update
         if: env.JIRA_KEY != ''
-        env:
-          JIRA_HOST: ${{ secrets.JIRA_HOST }}
-          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
-          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
         run: |
-          cd .github/scripts
-          node -e "
-          const JiraClient = require('jira-client');
-
-          const jira = new JiraClient({
-            protocol: 'https',
-            host: process.env.JIRA_HOST,
-            username: process.env.JIRA_EMAIL,
-            password: process.env.JIRA_API_TOKEN,
-            apiVersion: '2',
-            strictSSL: true
-          });
-
-          const jiraKey = process.env.JIRA_KEY;
-          const cleanTitle = process.env.CLEAN_TITLE;
-
-          console.log(\`Updating Jira issue \${jiraKey} with title: \${cleanTitle}\`);
-
-          jira.updateIssue(jiraKey, {
-            fields: {
-              summary: cleanTitle
-            }
-          })
-          .then(() => {
-            console.log(\`✅ Jira issue \${jiraKey} title updated successfully\`);
-          })
-          .catch(error => {
-            console.error(\`❌ Failed to update Jira issue: \${error.message}\`);
-            process.exit(1);
-          });
-          "
+          echo "ℹ️  Jira 이슈 제목 업데이트는 비활성화되어 있습니다."
+          echo "   PR 제목: ${{ env.CLEAN_TITLE }}"
+          echo "   Jira 키: ${{ env.JIRA_KEY }}"
+          echo "   Jira 이슈 제목은 변경되지 않습니다."
