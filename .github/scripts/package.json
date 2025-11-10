@@ -1,0 +1,9 @@
+{
+  "name": "jira-sync-scripts",
+  "version": "1.0.0",
+  "description": "GitHub Actions scripts for Jira synchronization",
+  "type": "module",
+  "dependencies": {
+    "jira-client": "^8.2.2"
+  }
+}

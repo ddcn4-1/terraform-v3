@@ -1,0 +1,78 @@
+name: Sync PR Title to Jira
+
+on:
+  pull_request:
+    types: [opened, edited]
+
+jobs:
+  sync-pr-to-jira:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          cd .github/scripts
+          npm install
+
+      - name: Sync PR title to Jira
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prTitle = context.payload.pull_request.title;
+            const branchName = context.payload.pull_request.head.ref;
+
+            console.log(`PR Title: ${prTitle}`);
+            console.log(`Branch: ${branchName}`);
+
+            // Jira 키 추출 (제목 또는 브랜치명에서)
+            const jiraKeyPattern = /([A-Z]+-\d+)/;
+            let jiraKey = null;
+
+            // 1. PR 제목에서 추출 시도
+            const titleMatch = prTitle.match(/^\[([A-Z]+-\d+)\]/);
+            if (titleMatch) {
+              jiraKey = titleMatch[1];
+            } else {
+              // 2. 브랜치명에서 추출 시도
+              const branchMatch = branchName.match(jiraKeyPattern);
+              if (branchMatch) {
+                jiraKey = branchMatch[1];
+              }
+            }
+
+            if (!jiraKey) {
+              console.log('⚠️  Jira 키를 찾을 수 없습니다. PR 제목 또는 브랜치명에 Jira 키가 필요합니다.');
+              return;
+            }
+
+            console.log(`✓ 추출된 Jira 키: ${jiraKey}`);
+
+            // Jira 키를 제거한 순수 제목 추출
+            let cleanTitle = prTitle;
+            const jiraKeyInTitle = cleanTitle.match(/^\[([A-Z]+-\d+)\]\s*/);
+            if (jiraKeyInTitle) {
+              cleanTitle = cleanTitle.replace(/^\[([A-Z]+-\d+)\]\s*/, '');
+            }
+
+            console.log(`Clean Title: ${cleanTitle}`);
+
+            // 환경 변수로 전달
+            const fs = require('fs');
+            fs.appendFileSync(process.env.GITHUB_ENV, `JIRA_KEY=${jiraKey}\n`);
+            fs.appendFileSync(process.env.GITHUB_ENV, `CLEAN_TITLE=${cleanTitle}\n`);
+
+      - name: Skip Jira issue title update
+        if: env.JIRA_KEY != ''
+        run: |
+          echo "ℹ️  Jira 이슈 제목 업데이트는 비활성화되어 있습니다."
+          echo "   PR 제목: ${{ env.CLEAN_TITLE }}"
+          echo "   Jira 키: ${{ env.JIRA_KEY }}"
+          echo "   Jira 이슈 제목은 변경되지 않습니다."
