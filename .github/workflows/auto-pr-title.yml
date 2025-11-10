@@ -1,0 +1,58 @@
+name: Auto Add Jira Key to PR Title
+
+on:
+  pull_request:
+    types: [opened, edited]
+
+jobs:
+  add-jira-key:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Extract Jira Key from Branch and Update PR Title
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const branchName = context.payload.pull_request.head.ref;
+            const currentTitle = context.payload.pull_request.title;
+
+            console.log(`PR #${prNumber}`);
+            console.log(`Branch: ${branchName}`);
+            console.log(`Current Title: ${currentTitle}`);
+
+            // Jira 키 패턴 매칭 (예: JST-123, PROJ-456)
+            // 브랜치명에서 추출: feature/JST-123-description 또는 JST-123-fix-bug
+            const jiraKeyPattern = /([A-Z]+-\d+)/;
+            const match = branchName.match(jiraKeyPattern);
+
+            if (!match) {
+              console.log('⚠️  브랜치명에서 Jira 키를 찾을 수 없습니다.');
+              console.log('예상 형식: feature/JST-123-description 또는 JST-123-fix-bug');
+              return;
+            }
+
+            const jiraKey = match[1];
+            console.log(`✓ 추출된 Jira 키: ${jiraKey}`);
+
+            // 이미 제목에 Jira 키가 있는지 확인
+            if (currentTitle.includes(`[${jiraKey}]`)) {
+              console.log('✓ PR 제목에 이미 Jira 키가 포함되어 있습니다.');
+              return;
+            }
+
+            // Jira 키를 제목 앞에 추가
+            const newTitle = `[${jiraKey}] ${currentTitle}`;
+
+            console.log(`새 제목: ${newTitle}`);
+
+            // PR 제목 업데이트
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              title: newTitle
+            });
+
+            console.log('✅ PR 제목이 업데이트되었습니다!');

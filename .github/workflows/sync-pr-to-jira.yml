@@ -1,0 +1,109 @@
+name: Sync PR Title to Jira
+
+on:
+  pull_request:
+    types: [opened, edited]
+
+jobs:
+  sync-pr-to-jira:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          cd .github/scripts
+          npm install
+
+      - name: Sync PR title to Jira
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prTitle = context.payload.pull_request.title;
+            const branchName = context.payload.pull_request.head.ref;
+
+            console.log(`PR Title: ${prTitle}`);
+            console.log(`Branch: ${branchName}`);
+
+            // Jira 키 추출 (제목 또는 브랜치명에서)
+            const jiraKeyPattern = /([A-Z]+-\d+)/;
+            let jiraKey = null;
+
+            // 1. PR 제목에서 추출 시도
+            const titleMatch = prTitle.match(/^\[([A-Z]+-\d+)\]/);
+            if (titleMatch) {
+              jiraKey = titleMatch[1];
+            } else {
+              // 2. 브랜치명에서 추출 시도
+              const branchMatch = branchName.match(jiraKeyPattern);
+              if (branchMatch) {
+                jiraKey = branchMatch[1];
+              }
+            }
+
+            if (!jiraKey) {
+              console.log('⚠️  Jira 키를 찾을 수 없습니다. PR 제목 또는 브랜치명에 Jira 키가 필요합니다.');
+              return;
+            }
+
+            console.log(`✓ 추출된 Jira 키: ${jiraKey}`);
+
+            // Jira 키를 제거한 순수 제목 추출
+            let cleanTitle = prTitle;
+            const jiraKeyInTitle = cleanTitle.match(/^\[([A-Z]+-\d+)\]\s*/);
+            if (jiraKeyInTitle) {
+              cleanTitle = cleanTitle.replace(/^\[([A-Z]+-\d+)\]\s*/, '');
+            }
+
+            console.log(`Clean Title: ${cleanTitle}`);
+
+            // 환경 변수로 전달
+            const fs = require('fs');
+            fs.appendFileSync(process.env.GITHUB_ENV, `JIRA_KEY=${jiraKey}\n`);
+            fs.appendFileSync(process.env.GITHUB_ENV, `CLEAN_TITLE=${cleanTitle}\n`);
+
+      - name: Update Jira issue title
+        if: env.JIRA_KEY != ''
+        env:
+          JIRA_HOST: ${{ secrets.JIRA_HOST }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          cd .github/scripts
+          node -e "
+          const JiraClient = require('jira-client');
+
+          const jira = new JiraClient({
+            protocol: 'https',
+            host: process.env.JIRA_HOST,
+            username: process.env.JIRA_EMAIL,
+            password: process.env.JIRA_API_TOKEN,
+            apiVersion: '2',
+            strictSSL: true
+          });
+
+          const jiraKey = process.env.JIRA_KEY;
+          const cleanTitle = process.env.CLEAN_TITLE;
+
+          console.log(\`Updating Jira issue \${jiraKey} with title: \${cleanTitle}\`);
+
+          jira.updateIssue(jiraKey, {
+            fields: {
+              summary: cleanTitle
+            }
+          })
+          .then(() => {
+            console.log(\`✅ Jira issue \${jiraKey} title updated successfully\`);
+          })
+          .catch(error => {
+            console.error(\`❌ Failed to update Jira issue: \${error.message}\`);
+            process.exit(1);
+          });
+          "

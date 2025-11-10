@@ -1,0 +1,40 @@
+name: Task - Feature
+description: Standard work item when no specialized template fits
+title: "FEATURE: "
+labels:
+  - Task
+  - feature
+projects:
+  - ddcn4-1/7
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: 목표 기능 내용
+      description: 구현하고자 하는 기능을 설명해주세요.
+      placeholder: "예) 로그인 시, 구글 소셜 로그인 기능을 추가합니다."
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: 작업 상세 내용
+      description: 구체적인 작업 내용과 구현 방법을 설명해주세요.
+      placeholder: |
+        - OAuth 2.0 인증 흐름 구현
+        - 사용자 정보 연동
+        - 에러 처리
+    validations:
+      required: false
+
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: 관련 문서, 이슈, 또는 참고 자료의 링크를 추가해주세요.
+      placeholder: |
+        - 관련 이슈: #123
+        - API 문서: https://...
+    validations:
+      required: false
