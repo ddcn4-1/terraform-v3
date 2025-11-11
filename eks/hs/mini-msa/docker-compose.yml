@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  queue-service:
+    build:
+      context: ./queue-service
+      dockerfile: Dockerfile
+    container_name: queue-service
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - SERVICE_NAME=queue-service
+      - CORE_SERVICE_URL=http://core-service:3002
+      - NODE_ENV=production
+    networks:
+      - msa-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  core-service:
+    build:
+      context: ./core-service
+      dockerfile: Dockerfile
+    container_name: core-service
+    ports:
+      - "3002:3002"
+    environment:
+      - PORT=3002
+      - SERVICE_NAME=core-service
+      - QUEUE_SERVICE_URL=http://queue-service:3001
+      - NODE_ENV=production
+    networks:
+      - msa-network
+    depends_on:
+      - queue-service
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  msa-network:
+    driver: bridge
