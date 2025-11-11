@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mini-msa-data
+  labels:
+    name: mini-msa-data
+    environment: development

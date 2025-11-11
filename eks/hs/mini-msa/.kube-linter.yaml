@@ -1,0 +1,29 @@
+# KubeLinter configuration for mini-msa project
+# https://docs.kubelinter.io/#/configuring-kubelinter
+
+checks:
+  # Disable checks that are not critical for development environment
+  doNotAutoAddDefaults: false
+
+  # Exclude specific checks for local development
+  exclude:
+    - "latest-tag"  # Allow latest tag for local development
+    - "no-anti-affinity"  # Optional for single-node local clusters
+    - "no-read-only-root-fs"  # Database StatefulSets need write access
+
+  # Include important security and reliability checks
+  include:
+    - "run-as-non-root"
+    - "unset-cpu-requirements"
+    - "unset-memory-requirements"
+    - "privilege-escalation-container"
+    - "privileged-container"
+    - "sensitive-host-mounts"
+    - "dangling-service"
+    - "mismatching-selector"
+    - "writable-host-mount"
+
+customChecks: []
+
+# Ignore specific files or directories
+# ignore:

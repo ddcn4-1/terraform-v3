@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: mini-msa-data
+data:
+  POSTGRES_HOST: postgres-service
+  POSTGRES_PORT: "5432"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-script
+  namespace: mini-msa-data
+data:
+  init-db.sql: |
+    -- Create users table
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(255) NOT NULL UNIQUE,
+        email VARCHAR(255) NOT NULL UNIQUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Create tasks table
+    CREATE TABLE IF NOT EXISTS tasks (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        status VARCHAR(50) DEFAULT 'pending',
+        priority VARCHAR(50) DEFAULT 'normal',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Create queue_items table
+    CREATE TABLE IF NOT EXISTS queue_items (
+        id SERIAL PRIMARY KEY,
+        task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+        payload JSONB NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        attempts INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        processed_at TIMESTAMP
+    );
+
+    -- Create indexes
+    CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
+    CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+    CREATE INDEX IF NOT EXISTS idx_queue_items_status ON queue_items(status);
+    CREATE INDEX IF NOT EXISTS idx_queue_items_task_id ON queue_items(task_id);
+
+    -- Insert sample data
+    INSERT INTO users (username, email) VALUES
+        ('admin', 'admin@example.com'),
+        ('testuser', 'test@example.com')
+    ON CONFLICT (username) DO NOTHING;
+
+    INSERT INTO tasks (user_id, title, description, priority) VALUES
+        (1, 'Sample Task', 'This is a sample task', 'high'),
+        (2, 'Test Task', 'This is a test task', 'normal')
+    ON CONFLICT DO NOTHING;
