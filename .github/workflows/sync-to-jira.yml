@@ -1,0 +1,510 @@
+name: Sync GitHub Issues to Jira
+
+on:
+  issues:
+    types: [opened, edited, closed, reopened, labeled, unlabeled]
+
+jobs:
+  sync-to-jira:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          cd .github/scripts
+          npm install
+
+      - name: Ensure workflow labels exist
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log('::group::📝 Label Management');
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const labels = [
+              { name: 'Task', color: '0EA5E9', description: 'Generic task label (sky blue)' },
+              { name: 'Epic', color: 'A855F7', description: 'Jira Epic sync label (vibrant purple)' },
+              { name: 'feature', color: '06B6D4', description: 'New feature or enhancement (cyan)' },
+              { name: 'refactor', color: 'F59E0B', description: 'Code or architecture clean-up (amber)' },
+              { name: 'docs', color: '10B981', description: 'Documentation updates (emerald)' },
+              { name: 'chore', color: '8B5CF6', description: 'Maintenance or ops work (violet)' },
+              { name: 'bug', color: 'EF4444', description: 'Defects mapped to Jira Task (bright red)' },
+            ];
+
+            for (const label of labels) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: label.name });
+                await github.rest.issues.updateLabel({
+                  owner,
+                  repo,
+                  name: label.name,
+                  color: label.color,
+                  description: label.description
+                });
+                console.log(`::notice::✓ Label '${label.name}' updated`);
+              } catch (error) {
+                if (error.status === 404) {
+                  await github.rest.issues.createLabel({
+                    owner,
+                    repo,
+                    name: label.name,
+                    color: label.color,
+                    description: label.description
+                  });
+                  console.log(`::notice::✓ Label '${label.name}' created`);
+                } else {
+                  console.log(`::error::Failed to manage label '${label.name}': ${error.message}`);
+                  throw error;
+                }
+              }
+            }
+
+            console.log('::endgroup::');
+
+      - name: Auto-assign issue creator
+        if: github.event.action == 'opened'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = context.payload.issue.number;
+            const creator = context.payload.issue.user.login;
+
+            await github.rest.issues.addAssignees({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              assignees: [creator]
+            });
+
+            console.log(`::notice::✓ Auto-assigned issue #${issueNumber} to @${creator}`);
+
+      - name: Get GitHub Projects status
+        if: github.event.action != 'closed'
+        id: project_status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log('::group::🗂️ GitHub Projects Status');
+
+            const issueNumber = context.payload.issue.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const projectName = 'ddcn41-v3';
+
+            try {
+              // 프로젝트 조회
+              const projectQuery = `
+                query($owner: String!, $repo: String!, $projectName: String!) {
+                  repository(owner: $owner, name: $repo) {
+                    projectsV2(first: 10, query: $projectName) {
+                      nodes {
+                        id
+                        title
+                        fields(first: 20) {
+                          nodes {
+                            ... on ProjectV2Field {
+                              id
+                              name
+                            }
+                            ... on ProjectV2SingleSelectField {
+                              id
+                              name
+                              options {
+                                id
+                                name
+                              }
+                            }
+                          }
+                        }
+                        items(first: 100) {
+                          nodes {
+                            id
+                            content {
+                              ... on Issue {
+                                number
+                              }
+                            }
+                            fieldValues(first: 20) {
+                              nodes {
+                                ... on ProjectV2ItemFieldSingleSelectValue {
+                                  name
+                                  field {
+                                    ... on ProjectV2SingleSelectField {
+                                      name
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `;
+
+              const projectData = await github.graphql(projectQuery, {
+                owner,
+                repo,
+                projectName
+              });
+
+              const project = projectData.repository.projectsV2.nodes.find(p => p.title === projectName);
+              if (!project) {
+                console.log('::warning::Project not found');
+                console.log('::endgroup::');
+                return null;
+              }
+
+              // 현재 이슈의 프로젝트 아이템 찾기
+              const item = project.items.nodes.find(
+                node => node.content?.number === issueNumber
+              );
+
+              if (!item) {
+                console.log('::notice::Issue not in project');
+                console.log('::endgroup::');
+                return null;
+              }
+
+              // Status 필드 값 찾기
+              const statusValue = item.fieldValues.nodes.find(
+                fv => fv.field?.name === 'Status'
+              );
+
+              if (statusValue) {
+                console.log(`::notice::✓ Project Status: ${statusValue.name}`);
+                console.log('::endgroup::');
+                return { status: statusValue.name };
+              }
+
+              console.log('::endgroup::');
+              return null;
+            } catch (error) {
+              console.log(`::error::Failed to query project status: ${error.message}`);
+              console.log('::endgroup::');
+              return null;
+            }
+
+      - name: Get parent issue info
+        if: github.event.action != 'closed'
+        id: parent_issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log('::group::🔗 Parent Issue Detection');
+
+            const issueNumber = context.payload.issue.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            try {
+              // GitHub GraphQL로 부모 이슈 정보 조회 (sub-issues API 사용)
+              const query = `
+                query($owner: String!, $repo: String!, $number: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    issue(number: $number) {
+                      parent {
+                        number
+                        title
+                      }
+                    }
+                  }
+                }
+              `;
+
+              const result = await github.graphql(query, {
+                owner,
+                repo,
+                number: issueNumber,
+                headers: {
+                  'GraphQL-Features': 'sub_issues'
+                }
+              });
+
+              const parent = result.repository.issue.parent;
+
+              if (parent && parent.number) {
+                console.log(`::notice::✓ Parent issue found: #${parent.number} - ${parent.title}`);
+                console.log('::endgroup::');
+                return {
+                  number: parent.number,
+                  title: parent.title || ''
+                };
+              } else {
+                console.log('::notice::No parent issue');
+                console.log('::endgroup::');
+                return null;
+              }
+            } catch (error) {
+              console.log(`::error::Failed to query parent issue: ${error.message}`);
+              console.log('::endgroup::');
+              return null;
+            }
+
+      - name: Sync issue to Jira
+        env:
+          JIRA_HOST: ${{ secrets.JIRA_HOST }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_PROJECT_KEY: ${{ secrets.JIRA_PROJECT_KEY }}
+          JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE || 'Task' }}
+          JIRA_DEFAULT_PRIORITY: ${{ vars.JIRA_DEFAULT_PRIORITY || 'Medium' }}
+          JIRA_EPIC_LINK_FIELD: ${{ vars.JIRA_EPIC_LINK_FIELD || 'customfield_10014' }}
+          GITHUB_EVENT_ACTION: ${{ github.event.action }}
+          GITHUB_ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GITHUB_ISSUE_TITLE: ${{ github.event.issue.title }}
+          GITHUB_ISSUE_BODY: ${{ github.event.issue.body }}
+          GITHUB_ISSUE_URL: ${{ github.event.issue.html_url }}
+          GITHUB_ISSUE_STATE: ${{ github.event.issue.state }}
+          GITHUB_ISSUE_LABELS: ${{ toJSON(github.event.issue.labels) }}
+          GITHUB_ISSUE_ASSIGNEES: ${{ toJSON(github.event.issue.assignees) }}
+          GITHUB_ISSUE_USER: ${{ github.event.issue.user.login }}
+          GITHUB_ISSUE_USER_URL: ${{ github.event.issue.user.html_url }}
+          GITHUB_REPOSITORY_NAME: ${{ github.event.repository.name }}
+          GITHUB_REPOSITORY_FULL_NAME: ${{ github.event.repository.full_name }}
+          GITHUB_REPOSITORY_URL: ${{ github.event.repository.html_url }}
+          GITHUB_PARENT_ISSUE_NUMBER: ${{ fromJSON(steps.parent_issue.outputs.result || '{}').number || '' }}
+          GITHUB_PARENT_ISSUE_TITLE: ${{ fromJSON(steps.parent_issue.outputs.result || '{}').title || '' }}
+          GITHUB_PROJECT_STATUS: ${{ fromJSON(steps.project_status.outputs.result || '{}').status || '' }}
+        run: |
+          cd .github/scripts
+          node sync-jira.js
+
+      - name: Update issue title and add comment
+        if: github.event.action == 'opened'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log('::group::📝 GitHub Issue Update');
+
+            const fs = require('fs');
+            try {
+              const result = fs.readFileSync('.github/scripts/jira-result.json', 'utf8');
+              const data = JSON.parse(result);
+
+              if (data.success && data.jiraKey) {
+                // GitHub 이슈 제목 업데이트
+                const currentTitle = context.payload.issue.title;
+                const newTitle = `[${data.jiraKey}] ${currentTitle}`;
+
+                await github.rest.issues.update({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: newTitle
+                });
+
+                console.log(`::notice::✓ Issue title updated: ${newTitle}`);
+
+                // 이슈 타입별 메시지
+                const issueTypeKo = {
+                  'Epic': 'Epic',
+                  'Story': '스토리',
+                  'Bug': '버그',
+                  'Task': '태스크'
+                };
+                const typeName = issueTypeKo[data.issueType] || '태스크';
+                const emoji = data.issueType === 'Epic' ? '🎯' :
+                              data.issueType === 'Bug' ? '🐛' :
+                              data.issueType === 'Story' ? '📖' : '✅';
+
+                // 코멘트 본문 생성
+                let commentBody = emoji + " **Jira " + typeName + " 동기화 완료**\n\n";
+                commentBody += "**Jira Ticket:** [" + data.jiraKey + "](https://" + process.env.JIRA_HOST + "/browse/" + data.jiraKey + ")\n";
+
+                // Parent 정보 추가
+                if (data.parentKey) {
+                  commentBody += "**상위 Epic:** [" + data.parentKey + "](https://" + process.env.JIRA_HOST + "/browse/" + data.parentKey + ")\n";
+                }
+
+                commentBody += "\n> GitHub Issue 제목이 `[" + data.jiraKey + "]` 로 업데이트되었습니다.";
+
+                // 코멘트 추가
+                await github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: commentBody
+                });
+
+                console.log(`::notice::✓ Comment added with Jira sync info`);
+                console.log(`::notice::Issue type: ${data.issueType}`);
+              }
+
+              console.log('::endgroup::');
+            } catch (error) {
+              console.log(`::error::Failed to update issue: ${error.message}`);
+              console.log('::endgroup::');
+            }
+        env:
+          JIRA_HOST: ${{ secrets.JIRA_HOST }}
+
+      - name: Set GitHub Project custom fields
+        if: github.event.action == 'opened'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log('::group::🗂️ GitHub Project Fields');
+
+            // GitHub Projects v2 커스텀 필드 설정
+            const projectName = 'ddcn41-v3';
+            const issueNumber = context.payload.issue.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            try {
+              // 1. 프로젝트 ID 조회
+              const projectQuery = `
+                query($owner: String!, $repo: String!, $projectName: String!) {
+                  repository(owner: $owner, name: $repo) {
+                    projectsV2(first: 10, query: $projectName) {
+                      nodes {
+                        id
+                        title
+                        fields(first: 20) {
+                          nodes {
+                            ... on ProjectV2Field {
+                              id
+                              name
+                            }
+                            ... on ProjectV2SingleSelectField {
+                              id
+                              name
+                              options {
+                                id
+                                name
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `;
+
+              const projectData = await github.graphql(projectQuery, {
+                owner,
+                repo,
+                projectName
+              });
+
+              const project = projectData.repository.projectsV2.nodes.find(p => p.title === projectName);
+
+              if (!project) {
+                console.log(`::warning::Project '${projectName}' not found`);
+                console.log('::endgroup::');
+                return;
+              }
+
+              console.log(`::notice::✓ Project found: ${project.title}`);
+
+              // 2. Issue를 프로젝트에 추가
+              const issueId = context.payload.issue.node_id;
+
+              const addItemMutation = `
+                mutation($projectId: ID!, $contentId: ID!) {
+                  addProjectV2ItemById(input: {
+                    projectId: $projectId
+                    contentId: $contentId
+                  }) {
+                    item {
+                      id
+                    }
+                  }
+                }
+              `;
+
+              const addResult = await github.graphql(addItemMutation, {
+                projectId: project.id,
+                contentId: issueId
+              });
+
+              const itemId = addResult.addProjectV2ItemById.item.id;
+              console.log(`::notice::✓ Issue added to project`);
+
+              // 3. 커스텀 필드 설정
+              const fields = project.fields.nodes;
+
+              // Status 필드 - "Todo"로 설정
+              const statusField = fields.find(f => f.name === 'Status');
+              if (statusField) {
+                const todoOption = statusField.options?.find(o => o.name === 'Todo');
+                if (todoOption) {
+                  const updateStatusMutation = `
+                    mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: ProjectV2FieldValue!) {
+                      updateProjectV2ItemFieldValue(input: {
+                        projectId: $projectId
+                        itemId: $itemId
+                        fieldId: $fieldId
+                        value: $value
+                      }) {
+                        projectV2Item {
+                          id
+                        }
+                      }
+                    }
+                  `;
+
+                  await github.graphql(updateStatusMutation, {
+                    projectId: project.id,
+                    itemId,
+                    fieldId: statusField.id,
+                    value: { singleSelectOptionId: todoOption.id }
+                  });
+
+                  console.log(`::notice::✓ Status set to: Todo`);
+                }
+              }
+
+              // Start date 필드 - 오늘 날짜로 설정
+              const startDateField = fields.find(f => f.name === 'Start date');
+              if (startDateField) {
+                const today = new Date().toISOString().split('T')[0];
+
+                const updateDateMutation = `
+                  mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: ProjectV2FieldValue!) {
+                    updateProjectV2ItemFieldValue(input: {
+                      projectId: $projectId
+                      itemId: $itemId
+                      fieldId: $fieldId
+                      value: $value
+                    }) {
+                      projectV2Item {
+                        id
+                      }
+                    }
+                  }
+                `;
+
+                await github.graphql(updateDateMutation, {
+                  projectId: project.id,
+                  itemId,
+                  fieldId: startDateField.id,
+                  value: { date: today }
+                });
+
+                console.log(`::notice::✓ Start date set to: ${today}`);
+              }
+
+              console.log('::endgroup::');
+
+            } catch (error) {
+              console.log(`::error::Failed to set project fields: ${error.message}`);
+              if (error.data) {
+                console.log(`::debug::${JSON.stringify(error.data, null, 2)}`);
+              }
+              console.log('::endgroup::');
+              // 에러가 발생해도 워크플로우는 계속 진행
+            }

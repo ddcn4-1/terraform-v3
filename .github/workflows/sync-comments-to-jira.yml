@@ -1,0 +1,45 @@
+name: Sync GitHub Comments to Jira
+
+on:
+  issue_comment:
+    types: [created, edited]
+
+jobs:
+  sync-comment:
+    # PR의 코멘트는 제외 (Issue만)
+    if: ${{ !github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          cd .github/scripts
+          npm install
+
+      - name: Sync comment to Jira
+        env:
+          JIRA_HOST: ${{ secrets.JIRA_HOST }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_PROJECT_KEY: ${{ secrets.JIRA_PROJECT_KEY }}
+          GITHUB_EVENT_ACTION: ${{ github.event.action }}
+          GITHUB_COMMENT_ID: ${{ github.event.comment.id }}
+          GITHUB_COMMENT_BODY: ${{ github.event.comment.body }}
+          GITHUB_COMMENT_USER: ${{ github.event.comment.user.login }}
+          GITHUB_COMMENT_USER_URL: ${{ github.event.comment.user.html_url }}
+          GITHUB_COMMENT_HTML_URL: ${{ github.event.comment.html_url }}
+          GITHUB_ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GITHUB_ISSUE_TITLE: ${{ github.event.issue.title }}
+          GITHUB_REPOSITORY_NAME: ${{ github.event.repository.name }}
+          GITHUB_REPOSITORY_FULL_NAME: ${{ github.event.repository.full_name }}
+        run: |
+          cd .github/scripts
+          node sync-comment-to-jira.js

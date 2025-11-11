@@ -1,0 +1,53 @@
+# YAML Lint configuration for mini-msa project
+# https://yamllint.readthedocs.io/
+
+extends: default
+
+rules:
+  # Document start (---) is optional
+  document-start:
+    present: false
+
+  # Line length can be longer for readability
+  line-length:
+    max: 120
+    level: warning
+
+  # Indentation must be consistent
+  indentation:
+    spaces: 2
+    indent-sequences: true
+
+  # Trailing spaces are not allowed
+  trailing-spaces: enable
+
+  # Truthy values
+  truthy:
+    allowed-values: ['true', 'false', 'yes', 'no', 'on', 'off']
+    check-keys: false
+
+  # Comments
+  comments:
+    min-spaces-from-content: 1
+
+  # Brackets and braces
+  brackets:
+    min-spaces-inside: 0
+    max-spaces-inside: 0
+
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 0
+
+  # Empty lines
+  empty-lines:
+    max: 2
+
+  # Allow duplicate keys in specific cases (e.g., multiple resources in same file)
+  key-duplicates: enable
+
+# Files to ignore
+ignore: |
+  /.git/
+  /node_modules/
+  /.vscode/
