@@ -1,0 +1,51 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ticket-backend-ingress
+  namespace: default
+  annotations:
+    # nginx.ingress.kubernetes.io/rewrite-target: /
+    # CORS 설정 (Frontend와 통신 시)
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://local.ddcn41.com,https://local.admin.ddcn41.com,https://local.accounts.ddcn41.com"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization"
+    # SSL 리다이렉트 (HTTP → HTTPS)
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # HSTS 설정 (보안 강화)
+    nginx.ingress.kubernetes.io/hsts: "true"
+    nginx.ingress.kubernetes.io/hsts-max-age: "31536000"
+    nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - local.api.ddcn41.com
+    - "*.ddcn41.com"
+    secretName: ticket-tls
+  rules:
+  - host: local.api.ddcn41.com
+    http:
+      paths:
+        - path: /v1
+          pathType: Prefix
+          backend:
+            service:
+              name: ticketing-main-service
+              port:
+                number: 8080
+        - path: /v1/admin
+          pathType: Prefix
+          backend:
+            service:
+              name: ticketing-admin-service
+              port:
+                number: 8080
+        - path: /v1/queue
+          pathType: Prefix
+          backend:
+            service:
+              name: ticketing-queue-service
+              port:
+                number: 8080

@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: ticketing-system-admin
+  name: ticketing-system-admin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ticketing-system-admin
+  strategy: {}
+  template:
+    metadata:
+      labels:
+        app: ticketing-system-admin
+    spec:
+      containers:
+      - image: 172.25.46.1:5000/ddcn41/msa/admin
+        name: admin
+        envFrom:
+        - secretRef:
+            name: admin-service-env
+        resources:
+          limits:
+            memory: 512Mi
+      imagePullSecrets:
+      - name: regcred
+status: {}
