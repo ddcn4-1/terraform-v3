@@ -31,11 +31,11 @@ terraform.rc
 *.key
 
 # Kubespray
-kubespray/
-!kubespray/hj/
-!kubespray/jy/
-inventory/backup/
-*.retry
+# kubespray/
+# !kubespray/hj/*
+# !kubespray/jy/*
+# inventory/backup/
+# *.retry
 
 # AWS credentials
 .aws/
