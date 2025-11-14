@@ -5,5 +5,8 @@ dependencies:
 - name: kubernetes-dashboard
   repository: https://kubernetes.github.io/dashboard/
   version: 7.14.0
-digest: sha256:5b042db449a12315d7b9f03652d393b45524e0b2fd061cf3ae478982ebf9915e
-generated: "2025-11-14T16:47:30.767836+09:00"
+- name: eck-operator
+  repository: https://helm.elastic.co
+  version: 2.15.0
+digest: sha256:114a0d92f0b6091c992155b38956bd4f871983d07715a999ae4257aa347f74da
+generated: "2025-11-14T18:04:04.246224+09:00"

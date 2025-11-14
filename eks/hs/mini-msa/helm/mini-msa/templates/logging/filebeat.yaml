@@ -1,0 +1,40 @@
+{{- if and .Values.logging.eck.operator.enabled .Values.logging.filebeat.enabled }}
+apiVersion: beat.k8s.elastic.co/v1beta1
+kind: Beat
+metadata:
+  name: {{ include "mini-msa.fullname" . }}-filebeat
+  namespace: {{ .Values.namespaces.app.name }}
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: logging
+    app.kubernetes.io/part-of: elk-stack
+spec:
+  type: filebeat
+  version: {{ .Values.logging.filebeat.version }}
+  elasticsearchRef:
+    name: {{ include "mini-msa.fullname" . }}-elasticsearch
+  config:
+    filebeat.inputs:
+      - type: container
+        paths:
+          - /var/log/containers/*.log
+    processors:
+      - add_kubernetes_metadata:
+          host: ${NODE_NAME}
+          matchers:
+            - logs_path:
+                logs_path: "/var/log/containers/"
+      - drop_event:
+          when:
+            or:
+              - contains:
+                  kubernetes.namespace: "kube-system"
+              - contains:
+                  kubernetes.namespace: "elastic-system"
+      - add_cloud_metadata: {}
+      - add_host_metadata: {}
+  {{- with .Values.logging.filebeat.daemonSet }}
+  daemonSet:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

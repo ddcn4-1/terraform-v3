@@ -53,6 +53,18 @@ help:
 	@echo "  make lint-docker       - Lint Dockerfiles"
 	@echo "  make lint-shell        - Lint shell scripts"
 	@echo ""
+	@echo "ELK Stack Commands:"
+	@echo "  make elk-install            - Install ELK stack (enable ECK operator)"
+	@echo "  make elk-status             - Check ELK stack status"
+	@echo "  make elk-password           - Get Elasticsearch password"
+	@echo "  make elk-port-forward-kibana - Port forward to Kibana (5601)"
+	@echo "  make elk-port-forward-es    - Port forward to Elasticsearch (9200)"
+	@echo "  make elk-logs-es            - View Elasticsearch logs"
+	@echo "  make elk-logs-kibana        - View Kibana logs"
+	@echo "  make elk-logs-filebeat      - View Filebeat logs"
+	@echo "  make elk-health             - Check ELK stack health"
+	@echo "  make elk-uninstall          - Uninstall ELK stack"
+	@echo ""
 
 # Build Docker images
 build:
@@ -439,3 +451,104 @@ helm-values:
 helm-history:
 	@echo "Helm release history:"
 	helm history $(HELM_RELEASE)
+
+# =============================================================================
+# ELK Stack Commands
+# =============================================================================
+
+# Install ELK stack (enable ECK operator)
+elk-install:
+	@echo "Installing ELK stack in two stages..."
+	@echo ""
+	@echo "Stage 1: Installing ECK Operator and CRDs..."
+	helm dependency update $(HELM_CHART_DIR)
+	helm upgrade --install $(HELM_RELEASE) $(HELM_CHART_DIR) -f $(HELM_VALUES_FILE) \
+		--set logging.eck.operator.enabled=true \
+		--set logging.elasticsearch.enabled=false \
+		--set logging.kibana.enabled=false \
+		--set logging.filebeat.enabled=false \
+		$(HELM_INSTALL_FLAGS)
+	@echo ""
+	@echo "Waiting for ECK Operator to be ready..."
+	@sleep 10
+	@echo ""
+	@echo "Stage 2: Installing Elasticsearch and Kibana..."
+	helm upgrade --install $(HELM_RELEASE) $(HELM_CHART_DIR) -f $(HELM_VALUES_FILE) \
+		--set logging.eck.operator.enabled=true \
+		$(HELM_INSTALL_FLAGS)
+	@echo ""
+	@echo "ELK stack installation complete!"
+	@echo "Run 'make elk-status' to check the status"
+
+# Check ELK stack status
+elk-status:
+	@echo "Checking ELK stack status..."
+	@echo ""
+	@echo "=== ECK Operator ==="
+	kubectl get pods -n elastic-system 2>/dev/null || echo "ECK Operator not installed"
+	@echo ""
+	@echo "=== Elasticsearch ==="
+	kubectl get elasticsearch -n $(APP_NAMESPACE) 2>/dev/null || echo "Elasticsearch not found"
+	kubectl get pods -l common.k8s.elastic.co/type=elasticsearch -n $(APP_NAMESPACE) 2>/dev/null || true
+	@echo ""
+	@echo "=== Kibana ==="
+	kubectl get kibana -n $(APP_NAMESPACE) 2>/dev/null || echo "Kibana not found"
+	kubectl get pods -l common.k8s.elastic.co/type=kibana -n $(APP_NAMESPACE) 2>/dev/null || true
+	@echo ""
+	@echo "=== Filebeat ==="
+	kubectl get beat -n $(APP_NAMESPACE) 2>/dev/null || echo "Filebeat not found"
+	kubectl get pods -l common.k8s.elastic.co/type=beat -n $(APP_NAMESPACE) 2>/dev/null || true
+
+# Get Elasticsearch password
+elk-password:
+	@echo "Retrieving Elasticsearch password..."
+	@kubectl get secret $(HELM_RELEASE)-elasticsearch-es-elastic-user -n $(APP_NAMESPACE) -o go-template='{{.data.elastic | base64decode}}' 2>/dev/null || echo "Secret not found. Make sure ELK stack is installed."
+	@echo ""
+
+# Port forward to Kibana
+elk-port-forward-kibana:
+	@echo "Port forwarding Kibana to localhost:5601..."
+	@echo "Access at: https://localhost:5601"
+	@echo "Username: elastic"
+	@echo "Password: (run 'make elk-password')"
+	@echo "Press Ctrl+C to stop"
+	@echo ""
+	kubectl port-forward -n $(APP_NAMESPACE) svc/$(HELM_RELEASE)-kibana-kb-http 5601:5601
+
+# Port forward to Elasticsearch
+elk-port-forward-es:
+	@echo "Port forwarding Elasticsearch to localhost:9200..."
+	@echo "Access at: https://localhost:9200"
+	@echo "Press Ctrl+C to stop"
+	@echo ""
+	kubectl port-forward -n $(APP_NAMESPACE) svc/$(HELM_RELEASE)-elasticsearch-es-http 9200:9200
+
+# View Elasticsearch logs
+elk-logs-es:
+	@echo "Viewing Elasticsearch logs..."
+	kubectl logs -l common.k8s.elastic.co/type=elasticsearch -n $(APP_NAMESPACE) --tail=50 -f
+
+# View Kibana logs
+elk-logs-kibana:
+	@echo "Viewing Kibana logs..."
+	kubectl logs -l common.k8s.elastic.co/type=kibana -n $(APP_NAMESPACE) --tail=50 -f
+
+# View Filebeat logs
+elk-logs-filebeat:
+	@echo "Viewing Filebeat logs..."
+	kubectl logs -l common.k8s.elastic.co/type=beat -n $(APP_NAMESPACE) --tail=50 -f
+
+# Uninstall ELK stack
+elk-uninstall:
+	@echo "Uninstalling ELK stack..."
+	kubectl delete elasticsearch,kibana,beat --all -n $(APP_NAMESPACE) 2>/dev/null || true
+	@echo "Waiting for resources to be deleted..."
+	@sleep 5
+	@echo "ELK stack uninstalled"
+
+# ELK health check
+elk-health:
+	@echo "Checking ELK stack health..."
+	@echo ""
+	@echo "Elasticsearch health:"
+	@kubectl exec -n $(APP_NAMESPACE) $(HELM_RELEASE)-elasticsearch-es-default-0 -- curl -k -u elastic:$$(kubectl get secret $(HELM_RELEASE)-elasticsearch-es-elastic-user -n $(APP_NAMESPACE) -o go-template='{{.data.elastic | base64decode}}') https://localhost:9200/_cluster/health?pretty 2>/dev/null || echo "Failed to connect"

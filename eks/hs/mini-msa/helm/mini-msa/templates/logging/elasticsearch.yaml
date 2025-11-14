@@ -1,0 +1,32 @@
+{{- if and .Values.logging.eck.operator.enabled .Values.logging.elasticsearch.enabled }}
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: {{ include "mini-msa.fullname" . }}-elasticsearch
+  namespace: {{ .Values.namespaces.app.name }}
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: logging
+    app.kubernetes.io/part-of: elk-stack
+spec:
+  version: {{ .Values.logging.elasticsearch.version }}
+  {{- with .Values.logging.elasticsearch.nodeSets }}
+  nodeSets:
+  {{- range . }}
+    - name: {{ .name }}
+      count: {{ .count }}
+      {{- with .config }}
+      config:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .volumeClaimTemplates }}
+      volumeClaimTemplates:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .podTemplate }}
+      podTemplate:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- end }}
+  {{- end }}
+{{- end }}
