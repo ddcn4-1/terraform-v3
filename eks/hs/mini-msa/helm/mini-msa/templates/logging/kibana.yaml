@@ -1,0 +1,24 @@
+{{- if and .Values.logging.eck.operator.enabled .Values.logging.kibana.enabled }}
+apiVersion: kibana.k8s.elastic.co/v1
+kind: Kibana
+metadata:
+  name: {{ include "mini-msa.fullname" . }}-kibana
+  namespace: {{ .Values.namespaces.app.name }}
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: logging
+    app.kubernetes.io/part-of: elk-stack
+spec:
+  version: {{ .Values.logging.kibana.version }}
+  count: {{ .Values.logging.kibana.count }}
+  elasticsearchRef:
+    name: {{ include "mini-msa.fullname" . }}-elasticsearch
+  {{- with .Values.logging.kibana.http }}
+  http:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.logging.kibana.podTemplate }}
+  podTemplate:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

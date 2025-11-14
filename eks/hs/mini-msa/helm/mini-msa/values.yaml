@@ -435,3 +435,128 @@ redis:
     periodSeconds: 10
     timeoutSeconds: 5
     failureThreshold: 3
+
+# Monitoring Configuration
+monitoring:
+  prometheus:
+    enabled: false
+  dashboard:
+    enabled: true
+  kubeview:
+    enabled: true
+    image:
+      repository: ghcr.io/benc-uk/kubeview
+      tag: "0.1.31"
+      pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP
+      port: 8000
+      # nodePort: 30080  # Set this if type is NodePort
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
+# Logging Configuration (ELK Stack)
+logging:
+  eck:
+    operator:
+      enabled: false
+      managedNamespaces:
+        - mini-msa-app
+        - mini-msa-data
+      resources:
+        limits:
+          cpu: 200m
+          memory: 256Mi
+        requests:
+          cpu: 100m
+          memory: 128Mi
+
+  elasticsearch:
+    enabled: true
+    version: "8.11.0"
+    nodeSets:
+      - name: default
+        count: 1
+        config:
+          node.store.allow_mmap: false
+        volumeClaimTemplates:
+          - metadata:
+              name: elasticsearch-data
+            spec:
+              accessModes:
+                - ReadWriteOnce
+              storageClassName: ""
+              resources:
+                requests:
+                  storage: 10Gi
+        podTemplate:
+          spec:
+            containers:
+              - name: elasticsearch
+                resources:
+                  requests:
+                    memory: 1Gi
+                    cpu: 500m
+                  limits:
+                    memory: 2Gi
+                    cpu: 1000m
+                env:
+                  - name: ES_JAVA_OPTS
+                    value: "-Xms512m -Xmx512m"
+
+  kibana:
+    enabled: true
+    version: "8.11.0"
+    count: 1
+    http:
+      service:
+        spec:
+          type: NodePort
+    podTemplate:
+      spec:
+        containers:
+          - name: kibana
+            resources:
+              requests:
+                memory: 512Mi
+                cpu: 200m
+              limits:
+                memory: 1Gi
+                cpu: 500m
+
+  filebeat:
+    enabled: true
+    version: "8.11.0"
+    daemonSet:
+      podTemplate:
+        spec:
+          serviceAccountName: filebeat
+          automountServiceAccountToken: true
+          containers:
+            - name: filebeat
+              resources:
+                requests:
+                  memory: 128Mi
+                  cpu: 100m
+                limits:
+                  memory: 256Mi
+                  cpu: 200m
+              volumeMounts:
+                - name: varlogcontainers
+                  mountPath: /var/log/containers
+                  readOnly: true
+                - name: varlogpods
+                  mountPath: /var/log/pods
+                  readOnly: true
+          volumes:
+            - name: varlogcontainers
+              hostPath:
+                path: /var/log/containers
+            - name: varlogpods
+              hostPath:
+                path: /var/log/pods

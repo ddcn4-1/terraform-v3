@@ -2,20 +2,79 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const promClient = require('prom-client');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
 const SERVICE_NAME = process.env.SERVICE_NAME || 'core-service';
 const QUEUE_SERVICE_URL = process.env.QUEUE_SERVICE_URL || 'http://queue-service:3001';
 
+// Prometheus metrics setup
+const register = new promClient.Registry();
+
+// Default metrics (CPU, memory, etc.)
+promClient.collectDefaultMetrics({ register });
+
+// Custom metrics
+const httpRequestDuration = new promClient.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'Duration of HTTP requests in seconds',
+  labelNames: ['method', 'route', 'status_code'],
+  buckets: [0.1, 0.5, 1, 2, 5]
+});
+
+const httpRequestTotal = new promClient.Counter({
+  name: 'http_requests_total',
+  help: 'Total number of HTTP requests',
+  labelNames: ['method', 'route', 'status_code']
+});
+
+const jobsCreated = new promClient.Counter({
+  name: 'jobs_created_total',
+  help: 'Total number of jobs created',
+  labelNames: ['type', 'status']
+});
+
+const queueServiceErrors = new promClient.Counter({
+  name: 'queue_service_errors_total',
+  help: 'Total number of queue service errors',
+  labelNames: ['operation']
+});
+
+register.registerMetric(httpRequestDuration);
+register.registerMetric(httpRequestTotal);
+register.registerMetric(jobsCreated);
+register.registerMetric(queueServiceErrors);
+
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Metrics middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+
+  res.on('finish', () => {
+    const duration = (Date.now() - start) / 1000;
+    const route = req.route ? req.route.path : req.path;
+
+    httpRequestDuration.labels(req.method, route, res.statusCode).observe(duration);
+    httpRequestTotal.labels(req.method, route, res.statusCode).inc();
+  });
+
+  next();
+});
 
 // Request logging middleware
 app.use((req, res, next) => {
   console.log(`[${SERVICE_NAME}] ${new Date().toISOString()} - ${req.method} ${req.path}`);
   next();
+});
+
+// Metrics endpoint
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
 });
 
 // Health check
@@ -71,12 +130,20 @@ app.post('/api/jobs', async (req, res) => {
 
     console.log(`[${SERVICE_NAME}] Job successfully queued:`, response.data.job.id);
 
+    // Update metrics
+    jobsCreated.labels(type, 'success').inc();
+
     res.status(201).json({
       message: 'Job sent to queue',
       job: response.data.job
     });
   } catch (error) {
     console.error(`[${SERVICE_NAME}] Error sending job to queue:`, error.message);
+
+    // Update metrics
+    jobsCreated.labels(type || 'unknown', 'error').inc();
+    queueServiceErrors.labels('create_job').inc();
+
     res.status(503).json({
       error: 'Failed to send job to queue',
       details: error.message

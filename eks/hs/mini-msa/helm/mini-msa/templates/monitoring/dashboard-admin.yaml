@@ -1,0 +1,27 @@
+{{- if .Values.monitoring.dashboard.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dashboard-admin
+  namespace: default
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dashboard-admin
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: dashboard-admin
+    namespace: default
+{{- end }}

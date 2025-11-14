@@ -1,0 +1,55 @@
+{{- if and .Values.logging.eck.operator.enabled .Values.logging.filebeat.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: filebeat
+  namespace: {{ .Values.namespaces.app.name }}
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: logging
+    app.kubernetes.io/part-of: elk-stack
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "mini-msa.fullname" . }}-filebeat
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: logging
+    app.kubernetes.io/part-of: elk-stack
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - pods
+      - nodes
+    verbs:
+      - get
+      - watch
+      - list
+  - apiGroups: ["apps"]
+    resources:
+      - replicasets
+    verbs:
+      - get
+      - watch
+      - list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "mini-msa.fullname" . }}-filebeat
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: logging
+    app.kubernetes.io/part-of: elk-stack
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "mini-msa.fullname" . }}-filebeat
+subjects:
+  - kind: ServiceAccount
+    name: filebeat
+    namespace: {{ .Values.namespaces.app.name }}
+{{- end }}

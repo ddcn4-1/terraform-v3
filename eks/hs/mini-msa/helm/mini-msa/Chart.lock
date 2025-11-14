@@ -1,0 +1,12 @@
+dependencies:
+- name: kube-prometheus-stack
+  repository: https://prometheus-community.github.io/helm-charts
+  version: 54.2.2
+- name: kubernetes-dashboard
+  repository: https://kubernetes.github.io/dashboard/
+  version: 7.14.0
+- name: eck-operator
+  repository: https://helm.elastic.co
+  version: 2.15.0
+digest: sha256:114a0d92f0b6091c992155b38956bd4f871983d07715a999ae4257aa347f74da
+generated: "2025-11-14T18:04:04.246224+09:00"

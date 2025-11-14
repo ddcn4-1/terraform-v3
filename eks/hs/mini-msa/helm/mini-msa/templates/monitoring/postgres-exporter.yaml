@@ -1,0 +1,87 @@
+{{- if index .Values "monitoring" "prometheus" "enabled" -}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mini-msa.fullname" . }}-postgres-exporter
+  namespace: {{ include "mini-msa.namespaceName" (dict "root" . "key" "app") }}
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-exporter
+  template:
+    metadata:
+      labels:
+        app: postgres-exporter
+    spec:
+      containers:
+        - name: postgres-exporter
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+          ports:
+            - name: metrics
+              containerPort: 9187
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.postgres.name }}
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.postgres.name }}
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.postgres.name }}
+                  key: POSTGRES_DB
+            - name: DATA_SOURCE_NAME
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres-service.mini-msa-data.svc.cluster.local:5432/$(POSTGRES_DB)?sslmode=disable"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mini-msa.fullname" . }}-postgres-exporter
+  namespace: {{ include "mini-msa.namespaceName" (dict "root" . "key" "app") }}
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-exporter
+    app: postgres-exporter
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres-exporter
+  ports:
+    - name: metrics
+      port: 9187
+      targetPort: metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "mini-msa.fullname" . }}-postgres-exporter
+  namespace: {{ include "mini-msa.namespaceName" (dict "root" . "key" "app") }}
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+    release: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app: postgres-exporter
+  endpoints:
+    - port: metrics
+      interval: 30s
+{{- end }}
