@@ -1,0 +1,386 @@
+{{- if .Values.coreService.enabled -}}
+{{- $root := . -}}
+{{- $appNs := include "mini-msa.namespaceName" (dict "root" $root "key" "app") -}}
+{{- $dataNs := include "mini-msa.namespaceName" (dict "root" $root "key" "data") -}}
+{{- $coreName := include "mini-msa.componentName" (dict "root" $root "suffix" (default "core-service" .Values.coreService.nameSuffix) "override" .Values.coreService.fullnameOverride) -}}
+{{- $serviceName := default $coreName .Values.coreService.service.name -}}
+{{- $configMapName := .Values.coreService.configMap.name -}}
+{{- if and (not .Values.coreService.configMap.create) (not $configMapName) }}
+{{- fail "coreService.configMap.name is required when configMap.create is false" }}
+{{- end -}}
+{{- if not $configMapName -}}
+{{- $configMapName = include "mini-msa.componentName" (dict "root" $root "suffix" (default "core-service-config" .Values.coreService.configMap.nameSuffix) "override" "") -}}
+{{- end -}}
+{{- $queueName := include "mini-msa.componentName" (dict "root" $root "suffix" (default "queue-service" .Values.queueService.nameSuffix) "override" .Values.queueService.fullnameOverride) -}}
+{{- $queueServiceName := default $queueName .Values.queueService.service.name -}}
+{{- $queuePort := .Values.queueService.service.port -}}
+{{- $clusterDomain := default "cluster.local" .Values.global.clusterDomain -}}
+{{- $queueUrlDefault := printf "http://%s.%s.svc.%s:%v" $queueServiceName $appNs $clusterDomain $queuePort -}}
+{{- $queueUrl := default $queueUrlDefault .Values.coreService.config.queueServiceUrl -}}
+{{- $postgresName := include "mini-msa.componentName" (dict "root" $root "suffix" (default "postgres" .Values.postgres.nameSuffix) "override" .Values.postgres.fullnameOverride) -}}
+{{- $postgresSvcName := default (printf "%s-service" $postgresName) .Values.postgres.service.name -}}
+{{- $postgresHostDefault := printf "%s.%s.svc.%s" $postgresSvcName $dataNs $clusterDomain -}}
+{{- $postgresHost := default $postgresHostDefault .Values.coreService.config.postgresHost -}}
+{{- $redisName := include "mini-msa.componentName" (dict "root" $root "suffix" (default "redis" .Values.redis.nameSuffix) "override" .Values.redis.fullnameOverride) -}}
+{{- $redisSvcName := default (printf "%s-service" $redisName) .Values.redis.service.name -}}
+{{- $redisHostDefault := printf "%s.%s.svc.%s" $redisSvcName $dataNs $clusterDomain -}}
+{{- $redisHost := default $redisHostDefault .Values.coreService.config.redisHost -}}
+{{- $postgresSecret := default .Values.secrets.postgres.name .Values.coreService.secretRefs.postgres -}}
+{{- $redisSecret := default .Values.secrets.redis.name .Values.coreService.secretRefs.redis -}}
+{{- if and (not $postgresSecret) .Values.secrets.postgres.create }}
+{{- fail "PostgreSQL secret name cannot be empty" }}
+{{- end -}}
+{{- if and (not $redisSecret) .Values.secrets.redis.create }}
+{{- fail "Redis secret name cannot be empty" }}
+{{- end -}}
+{{- if .Values.coreService.configMap.create }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $configMapName }}
+  namespace: {{ $appNs }}
+  labels:
+    {{- include "mini-msa.componentLabels" (dict "root" $root "component" "core-config") | nindent 4 }}
+    {{- with $root.Values.global.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+data:
+  PORT: {{ .Values.coreService.config.port | quote }}
+  SERVICE_NAME: {{ default $serviceName .Values.coreService.config.serviceName | quote }}
+  QUEUE_SERVICE_URL: {{ $queueUrl | quote }}
+  NODE_ENV: {{ .Values.coreService.config.nodeEnv | quote }}
+  POSTGRES_HOST: {{ $postgresHost | quote }}
+  POSTGRES_PORT: {{ .Values.coreService.config.postgresPort | quote }}
+  REDIS_HOST: {{ $redisHost | quote }}
+  REDIS_PORT: {{ .Values.coreService.config.redisPort | quote }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $coreName }}
+  namespace: {{ $appNs }}
+  labels:
+    {{- include "mini-msa.componentLabels" (dict "root" $root "component" "core") | nindent 4 }}
+    app: core-service
+    {{- with .Values.global.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.coreService.podLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  replicas: {{ .Values.coreService.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mini-msa.selectorLabels" $root | nindent 6 }}
+      app.kubernetes.io/component: core
+      app: core-service
+  template:
+    metadata:
+      labels:
+        {{- include "mini-msa.selectorLabels" $root | nindent 8 }}
+        app.kubernetes.io/component: core
+        app: core-service
+        {{- with .Values.global.commonLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.coreService.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.coreService.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ if .Values.coreService.serviceAccount.create }}{{ default (printf "%s-sa" $coreName) .Values.coreService.serviceAccount.name }}{{ else }}{{ default "default" .Values.coreService.serviceAccount.name }}{{ end }}
+      {{- $autoNodeSelector := deepCopy (default (dict) .Values.global.nodeSelector) }}
+      {{- $autoNodeSelector = merge $autoNodeSelector (default (dict) .Values.coreService.nodeSelector) }}
+      {{- if $autoNodeSelector }}
+      nodeSelector:
+        {{- toYaml $autoNodeSelector | nindent 8 }}
+      {{- end }}
+      {{- $tolerations := concat (default (list) .Values.global.tolerations) (default (list) .Values.coreService.tolerations) }}
+      {{- if $tolerations }}
+      tolerations:
+        {{- toYaml $tolerations | nindent 8 }}
+      {{- end }}
+      {{- $affinity := deepCopy (default (dict) .Values.global.affinity) }}
+      {{- $affinity = merge $affinity (default (dict) .Values.coreService.affinity) }}
+      {{- if $affinity }}
+      affinity:
+        {{- toYaml $affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.coreService.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml .Values.coreService.topologySpreadConstraints | nindent 8 }}
+      {{- end }}
+      {{- if .Values.coreService.securityContext.enabled }}
+      securityContext:
+        runAsNonRoot: {{ .Values.coreService.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.coreService.securityContext.runAsUser }}
+        fsGroup: {{ .Values.coreService.securityContext.fsGroup }}
+      {{- end }}
+      {{- $pullSecrets := concat (default (list) .Values.global.imagePullSecrets) (default (list) .Values.coreService.imagePullSecrets) }}
+      {{- if $pullSecrets }}
+      imagePullSecrets:
+        {{- range $pullSecrets }}
+        - name: {{ .name | default . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.coreService.initContainers.waitForQueue .Values.coreService.extraInitContainers }}
+      initContainers:
+        {{- if .Values.coreService.initContainers.waitForQueue }}
+        - name: wait-for-queue-service
+          image: {{ .Values.global.waitFor.image }}
+          imagePullPolicy: {{ .Values.global.waitFor.imagePullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ $queueServiceName }}.{{ $appNs }}.svc.{{ $clusterDomain }} {{ $queuePort }}; do
+                echo "Waiting for Queue Service..."
+                sleep 2
+              done
+              echo "Queue Service is ready!"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.global.waitFor.resources | nindent 12 }}
+        {{- end }}
+        {{- with .Values.coreService.extraInitContainers }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.coreService.priorityClassName }}
+      priorityClassName: {{ .Values.coreService.priorityClassName }}
+      {{- end }}
+      containers:
+        - name: {{ $coreName }}
+          image: {{ printf "%s:%s" .Values.coreService.image.repository .Values.coreService.image.tag }}
+          imagePullPolicy: {{ .Values.coreService.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.coreService.service.targetPort }}
+              name: http
+          {{- if .Values.coreService.containerSecurityContext }}
+          securityContext:
+            {{- toYaml .Values.coreService.containerSecurityContext | nindent 12 }}
+          {{- end }}
+          {{- $volumeMounts := concat (default (list) .Values.coreService.volumeMounts) (default (list) .Values.coreService.extraVolumeMounts) }}
+          {{- if $volumeMounts }}
+          volumeMounts:
+            {{- toYaml $volumeMounts | nindent 12 }}
+          {{- end }}
+          env:
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ $configMapName }}
+                  key: PORT
+            - name: SERVICE_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ $configMapName }}
+                  key: SERVICE_NAME
+            - name: QUEUE_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ $configMapName }}
+                  key: QUEUE_SERVICE_URL
+            - name: NODE_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ $configMapName }}
+                  key: NODE_ENV
+            - name: POSTGRES_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ $configMapName }}
+                  key: POSTGRES_HOST
+            - name: POSTGRES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ $configMapName }}
+                  key: POSTGRES_PORT
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ $configMapName }}
+                  key: REDIS_HOST
+            - name: REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ $configMapName }}
+                  key: REDIS_PORT
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecret }}
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecret }}
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecret }}
+                  key: POSTGRES_DB
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $redisSecret }}
+                  key: REDIS_PASSWORD
+            {{- with .Values.coreService.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.coreService.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.coreService.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.coreService.probes.liveness.path }}
+              port: {{ .Values.coreService.service.targetPort }}
+            initialDelaySeconds: {{ .Values.coreService.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.coreService.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.coreService.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.coreService.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.coreService.probes.readiness.path }}
+              port: {{ .Values.coreService.service.targetPort }}
+            initialDelaySeconds: {{ .Values.coreService.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.coreService.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.coreService.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.coreService.probes.readiness.failureThreshold }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.coreService.probes.startup.path }}
+              port: {{ .Values.coreService.service.targetPort }}
+            periodSeconds: {{ .Values.coreService.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.coreService.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ .Values.coreService.probes.startup.failureThreshold }}
+      {{- $volumes := concat (default (list) .Values.coreService.volumes) (default (list) .Values.coreService.extraVolumes) }}
+      {{- if $volumes }}
+      volumes:
+        {{- toYaml $volumes | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $serviceName }}
+  namespace: {{ $appNs }}
+  labels:
+    {{- include "mini-msa.componentLabels" (dict "root" $root "component" "core-service") | nindent 4 }}
+    {{- with .Values.global.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    app: core-service
+spec:
+  type: {{ .Values.coreService.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.coreService.service.port }}
+      targetPort: {{ .Values.coreService.service.targetPort }}
+      protocol: TCP
+      {{- if eq .Values.coreService.service.type "NodePort" }}
+      nodePort: {{ .Values.coreService.service.nodePort }}
+      {{- end }}
+  selector:
+    {{- include "mini-msa.selectorLabels" $root | nindent 4 }}
+    app.kubernetes.io/component: core
+    app: core-service
+{{- if .Values.coreService.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ printf "%s-ingress" $coreName }}
+  namespace: {{ $appNs }}
+  labels:
+    {{- include "mini-msa.componentLabels" (dict "root" $root "component" "core-ingress") | nindent 4 }}
+    {{- with .Values.global.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.coreService.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.coreService.ingress.className }}
+  ingressClassName: {{ .Values.coreService.ingress.className }}
+  {{- end }}
+  rules:
+    {{- range .Values.coreService.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ $serviceName }}
+                port:
+                  number: {{ $.Values.coreService.service.port }}
+          {{- end }}
+    {{- end }}
+  {{- with .Values.coreService.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- range $name, $ing := .Values.coreService.additionalIngresses }}
+{{- if $ing.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ printf "%s-%s" $coreName $name }}
+  namespace: {{ $appNs }}
+  labels:
+    {{- include "mini-msa.componentLabels" (dict "root" $root "component" (printf "core-%s" $name)) | nindent 4 }}
+    {{- with .Values.global.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with $ing.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if $ing.className }}
+  ingressClassName: {{ $ing.className }}
+  {{- end }}
+  rules:
+    {{- range $ing.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ $serviceName }}
+                port:
+                  number: {{ $.Values.coreService.service.port }}
+          {{- end }}
+    {{- end }}
+  {{- with $ing.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

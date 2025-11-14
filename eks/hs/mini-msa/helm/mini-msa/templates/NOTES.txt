@@ -1,0 +1,16 @@
+Thank you for installing {{ include "mini-msa.fullname" . }}!
+
+Your release deploys the following namespaces:
+  - App namespace: {{ include "mini-msa.namespaceName" (dict "root" . "key" "app") }}
+  - Data namespace: {{ include "mini-msa.namespaceName" (dict "root" . "key" "data") }}
+
+Key commands:
+  kubectl get pods -n {{ include "mini-msa.namespaceName" (dict "root" . "key" "app") }}
+  kubectl get pods -n {{ include "mini-msa.namespaceName" (dict "root" . "key" "data") }}
+
+If ingress is enabled, point your DNS to the ingress controller address and use the hosts defined in `coreService.ingress.hosts`.
+
+Need to troubleshoot?
+  - make helm-status
+  - make helm-template
+  - make helm-dry-run

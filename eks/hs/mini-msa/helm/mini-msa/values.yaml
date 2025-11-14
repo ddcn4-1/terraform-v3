@@ -1,0 +1,437 @@
+global:
+  clusterDomain: cluster.local
+  imagePullSecrets: []
+  commonLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  waitFor:
+    image: busybox:1.36
+    imagePullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 50m
+        memory: 32Mi
+      limits:
+        cpu: 200m
+        memory: 64Mi
+
+namespaces:
+  app:
+    create: true
+    name: mini-msa-app
+    labels:
+      environment: development
+    annotations: {}
+  data:
+    create: true
+    name: mini-msa-data
+    labels:
+      environment: development
+    annotations: {}
+
+secrets:
+  postgres:
+    create: true
+    name: postgres-secret
+    targetNamespaces:
+      - data
+      - app
+    data:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+      POSTGRES_DB: mini_msa
+  redis:
+    create: true
+    name: redis-secret
+    targetNamespaces:
+      - data
+      - app
+    data:
+      REDIS_PASSWORD: redis123
+
+coreService:
+  enabled: true
+  nameSuffix: core-service
+  fullnameOverride: ""
+  namespace: ""
+  replicaCount: 2
+  priorityClassName: ""
+  image:
+    repository: core-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  serviceAccount:
+    create: false
+    name: ""
+    annotations: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - core
+  topologySpreadConstraints: []
+  securityContext:
+    enabled: true
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  volumes:
+    - name: tmp
+      emptyDir: {}
+    - name: app-cache
+      emptyDir: {}
+  volumeMounts:
+    - name: tmp
+      mountPath: /tmp
+    - name: app-cache
+      mountPath: /app/.npm
+  extraVolumes: []
+  extraVolumeMounts: []
+  env: []
+  extraEnvFrom: []
+  service:
+    name: "core-service"
+    type: NodePort
+    port: 3002
+    targetPort: 3002
+    nodePort: 30002
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /
+      nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    hosts:
+      - host: mini-msa.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+  additionalIngresses:
+    alb:
+      enabled: true
+      className: alb
+      annotations:
+        kubernetes.io/ingress.class: alb
+        alb.ingress.kubernetes.io/scheme: internet-facing
+        alb.ingress.kubernetes.io/target-type: ip
+        alb.ingress.kubernetes.io/healthcheck-path: /health
+      hosts:
+        - host: ""
+          paths:
+            - path: /
+              pathType: Prefix
+      tls: []
+  configMap:
+    create: true
+    name: ""
+    nameSuffix: core-service-config
+  config:
+    port: "3002"
+    serviceName: core-service
+    queueServiceUrl: ""
+    nodeEnv: production
+    postgresHost: ""
+    postgresPort: "5432"
+    redisHost: ""
+    redisPort: "6379"
+  probes:
+    liveness:
+      path: /health
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 3
+    readiness:
+      path: /health
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    startup:
+      path: /health
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 12
+  initContainers:
+    waitForQueue: true
+  extraInitContainers: []
+  secretRefs:
+    postgres: postgres-secret
+    redis: redis-secret
+
+queueService:
+  enabled: true
+  nameSuffix: queue-service
+  fullnameOverride: ""
+  namespace: ""
+  replicaCount: 2
+  priorityClassName: ""
+  image:
+    repository: queue-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  serviceAccount:
+    create: false
+    name: ""
+    annotations: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - queue
+  topologySpreadConstraints: []
+  securityContext:
+    enabled: true
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  volumes:
+    - name: tmp
+      emptyDir: {}
+    - name: app-cache
+      emptyDir: {}
+  volumeMounts:
+    - name: tmp
+      mountPath: /tmp
+    - name: app-cache
+      mountPath: /app/.npm
+  extraVolumes: []
+  extraVolumeMounts: []
+  env: []
+  extraEnvFrom: []
+  service:
+    name: "queue-service"
+    type: ClusterIP
+    port: 3001
+    targetPort: 3001
+  configMap:
+    create: true
+    name: ""
+    nameSuffix: queue-service-config
+  config:
+    port: "3001"
+    serviceName: queue-service
+    coreServiceUrl: ""
+    nodeEnv: production
+    postgresHost: ""
+    postgresPort: "5432"
+    redisHost: ""
+    redisPort: "6379"
+  probes:
+    liveness:
+      path: /health
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 3
+    readiness:
+      path: /health
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    startup:
+      path: /health
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 12
+  initContainers:
+    waitForPostgres: true
+    waitForRedis: true
+  extraInitContainers: []
+  secretRefs:
+    postgres: postgres-secret
+    redis: redis-secret
+
+postgres:
+  enabled: true
+  nameSuffix: postgres
+  fullnameOverride: ""
+  namespace: ""
+  image:
+    repository: postgres
+    tag: 16-alpine
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  replicaCount: 1
+  service:
+    name: "postgres-service"
+    port: 5432
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  securityContext:
+    enabled: true
+    runAsNonRoot: true
+    runAsUser: 999
+    fsGroup: 999
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  dataMountPath: /var/lib/postgresql/data
+  pgDataDir: /var/lib/postgresql/data/pgdata
+  config:
+    host: postgres-service
+    port: "5432"
+  initSql: |-
+    -- Initialize schema
+    CREATE TABLE IF NOT EXISTS migrations (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  secretName: postgres-secret
+  readinessProbe:
+    command:
+      - /bin/sh
+      - -c
+      - pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  livenessProbe:
+    command:
+      - /bin/sh
+      - -c
+      - pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+redis:
+  enabled: true
+  nameSuffix: redis
+  fullnameOverride: ""
+  namespace: ""
+  image:
+    repository: redis
+    tag: 7-alpine
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  command:
+    - redis-server
+  args:
+    - --appendonly
+    - "yes"
+    - --requirepass
+    - $(REDIS_PASSWORD)
+  replicaCount: 1
+  service:
+    name: "redis-service"
+    port: 6379
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 5Gi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  securityContext:
+    enabled: true
+    runAsNonRoot: true
+    runAsUser: 999
+    fsGroup: 999
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  secretName: redis-secret
+  readinessProbe:
+    command:
+      - redis-cli
+      - --raw
+      - incr
+      - ping
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  livenessProbe:
+    command:
+      - redis-cli
+      - --raw
+      - incr
+      - ping
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3

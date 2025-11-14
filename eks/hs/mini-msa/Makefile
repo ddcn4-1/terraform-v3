@@ -30,6 +30,22 @@ help:
 	@echo "  make k8s-clean-force   - Remove all Kubernetes resources (no confirmation)"
 	@echo "  make k8s-clean-all     - Remove Kubernetes resources and Docker images"
 	@echo ""
+	@echo "Helm Commands:"
+	@echo "  make helm-preflight    - Run pre-flight validation checks (recommended first)"
+	@echo "  make helm-reset        - Automated cleanup and fresh install (zero manual intervention)"
+	@echo "  make helm-install      - Install/upgrade application using Helm (idempotent)"
+	@echo "  make helm-upgrade      - Upgrade existing Helm release"
+	@echo "  make helm-uninstall    - Uninstall Helm release and clean up"
+	@echo "  make helm-deps         - Update Helm chart dependencies"
+	@echo "  make helm-lint         - Lint Helm chart"
+	@echo "  make helm-template     - Render Helm templates"
+	@echo "  make helm-status       - Show Helm release status"
+	@echo "  make helm-build-images - Build local service images for Helm dev profile"
+	@echo "  make helm-dry-run      - Perform dry-run installation"
+	@echo "  make helm-values       - Show current Helm values"
+	@echo "  make helm-history      - Show Helm release history"
+	@echo "  make helm-rollback     - Rollback to previous Helm release"
+	@echo ""
 	@echo "Linting Commands:"
 	@echo "  make lint              - Run all linting checks"
 	@echo "  make lint-yaml         - Lint YAML files"
@@ -296,3 +312,130 @@ lint-docker:
 lint-shell:
 	@echo "Linting shell scripts..."
 	@shellcheck scripts/*.sh
+
+# =============================================================================
+# Helm Commands
+# =============================================================================
+HELM_RELEASE ?= mini-msa
+HELM_CHART_DIR ?= helm/mini-msa
+HELM_VALUES_FILE ?= $(HELM_CHART_DIR)/values-dev.yaml
+HELM_INSTALL_FLAGS ?= --atomic --wait --timeout 5m
+HELM_DEBUG ?= true
+HELM_DEBUG_FLAG := $(if $(filter true,$(HELM_DEBUG)),--debug,)
+HELM_BUILD_IMAGES ?= true
+APP_NAMESPACE ?= mini-msa-app
+DATA_NAMESPACE ?= mini-msa-data
+.PHONY: helm-deps helm-lint helm-template helm-install helm-upgrade helm-uninstall helm-status helm-test helm-rollback helm-reset helm-preflight helm-build-images
+
+# Build service images for local Helm deployments
+helm-build-images:
+	@echo "Building Docker images for Helm deployment (queue/core)..."
+	docker build -t queue-service:latest ./queue-service
+	docker build -t core-service:latest ./core-service
+
+# Update Helm dependencies
+helm-deps:
+	@echo "Updating Helm dependencies..."
+	cd $(HELM_CHART_DIR) && helm dependency update
+
+# Lint Helm chart
+helm-lint:
+	@echo "Linting Helm chart..."
+	helm lint $(HELM_CHART_DIR)
+
+# Render Helm templates
+helm-template:
+	@echo "Rendering Helm templates..."
+	helm template $(HELM_RELEASE) $(HELM_CHART_DIR) -f $(HELM_VALUES_FILE)
+
+# Install Helm chart (development environment) - Idempotent
+helm-install:
+	@echo "Installing Mini MSA with Helm..."
+	@if [ "$(HELM_BUILD_IMAGES)" = "true" ]; then \
+		$(MAKE) helm-build-images; \
+	fi
+	@if helm list -q | grep -q "^$(HELM_RELEASE)$$"; then \
+		echo "Release already exists, upgrading..."; \
+		HELM_BUILD_IMAGES=false $(MAKE) helm-upgrade; \
+	else \
+		echo "New installation..."; \
+		set -x; \
+		helm dependency update $(HELM_CHART_DIR); \
+		helm install $(HELM_RELEASE) $(HELM_CHART_DIR) -f $(HELM_VALUES_FILE) --create-namespace $(HELM_INSTALL_FLAGS) $(HELM_DEBUG_FLAG); \
+		set +x; \
+	fi
+	@echo ""
+	@echo "Deployment complete!"
+	@echo ""
+	@echo "Access the application:"
+	@echo "  - Core Service: http://localhost:30002"
+	@echo "  - With Ingress: http://mini-msa.local (add to /etc/hosts)"
+	@echo ""
+	@echo "Helm status snapshot:"
+	@$(MAKE) --no-print-directory helm-status || true
+
+# Automated reset and install (eliminates manual intervention)
+helm-reset:
+	@echo "Running automated Helm reset..."
+	@chmod +x scripts/helm-reset.sh
+	@./scripts/helm-reset.sh
+
+# Pre-flight validation checks
+helm-preflight:
+	@echo "Running pre-flight checks..."
+	@chmod +x scripts/preflight-check.sh
+	@./scripts/preflight-check.sh
+
+# Upgrade Helm release
+helm-upgrade:
+	@echo "Upgrading Mini MSA Helm release..."
+	@if [ "$(HELM_BUILD_IMAGES)" = "true" ]; then \
+		$(MAKE) helm-build-images; \
+	fi
+	@set -x; \
+	helm dependency update $(HELM_CHART_DIR); \
+	helm upgrade $(HELM_RELEASE) $(HELM_CHART_DIR) -f $(HELM_VALUES_FILE) --install $(HELM_INSTALL_FLAGS) $(HELM_DEBUG_FLAG); \
+	set +x
+
+# Uninstall Helm release
+helm-uninstall:
+	@echo "Uninstalling Mini MSA Helm release..."
+	helm uninstall $(HELM_RELEASE) || true
+	kubectl delete namespace $(APP_NAMESPACE) $(DATA_NAMESPACE) || true
+
+# Check Helm release status
+helm-status:
+	@echo "Helm Release Status:"
+	helm status $(HELM_RELEASE)
+	@echo ""
+	@echo "Kubernetes Resources:"
+	kubectl get all -n $(APP_NAMESPACE)
+	@echo ""
+	kubectl get all -n $(DATA_NAMESPACE)
+
+# Run Helm tests
+helm-test:
+	@echo "Running Helm connectivity tests..."
+	@chmod +x scripts/helm-test.sh
+	@APP_NAMESPACE=$(APP_NAMESPACE) DATA_NAMESPACE=$(DATA_NAMESPACE) HELM_RELEASE=$(HELM_RELEASE) ./scripts/helm-test.sh
+
+# Rollback Helm release
+helm-rollback:
+	@echo "Rolling back Helm release..."
+	helm rollback $(HELM_RELEASE)
+
+# Dry-run installation
+helm-dry-run:
+	@echo "Performing dry-run installation..."
+	helm dependency update $(HELM_CHART_DIR)
+	helm install $(HELM_RELEASE) $(HELM_CHART_DIR) -f $(HELM_VALUES_FILE) --create-namespace $(HELM_INSTALL_FLAGS) --dry-run $(HELM_DEBUG_FLAG)
+
+# Get Helm values
+helm-values:
+	@echo "Current Helm values:"
+	helm get values $(HELM_RELEASE)
+
+# Helm history
+helm-history:
+	@echo "Helm release history:"
+	helm history $(HELM_RELEASE)

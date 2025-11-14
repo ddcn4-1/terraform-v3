@@ -1,0 +1,154 @@
+{{- if .Values.redis.enabled -}}
+{{- $root := . -}}
+{{- $ns := include "mini-msa.namespaceName" (dict "root" $root "key" "data") -}}
+{{- $name := include "mini-msa.componentName" (dict "root" $root "suffix" (default "redis" .Values.redis.nameSuffix) "override" .Values.redis.fullnameOverride) -}}
+{{- $serviceName := default (printf "%s-service" $name) .Values.redis.service.name -}}
+{{- $secretName := default .Values.secrets.redis.name .Values.redis.secretName -}}
+{{- if not $secretName }}
+{{- fail "redis.secretName (or secrets.redis.name) is required" }}
+{{- end -}}
+{{- $persistenceEnabled := and .Values.redis.persistence.enabled .Values.redis.persistence.size }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $serviceName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "mini-msa.componentLabels" (dict "root" $root "component" "redis-service") | nindent 4 }}
+    {{- with .Values.global.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    app: redis
+spec:
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: {{ .Values.redis.service.port }}
+      targetPort: {{ .Values.redis.service.port }}
+      protocol: TCP
+  selector:
+    {{- include "mini-msa.selectorLabels" $root | nindent 4 }}
+    app.kubernetes.io/component: redis
+    app: redis
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "mini-msa.componentLabels" (dict "root" $root "component" "redis") | nindent 4 }}
+    {{- with .Values.global.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    app: redis
+spec:
+  serviceName: {{ $serviceName }}
+  replicas: {{ .Values.redis.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mini-msa.selectorLabels" $root | nindent 6 }}
+      app.kubernetes.io/component: redis
+      app: redis
+  template:
+    metadata:
+      labels:
+        {{- include "mini-msa.selectorLabels" $root | nindent 8 }}
+        app.kubernetes.io/component: redis
+        {{- with .Values.global.commonLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        app: redis
+    spec:
+      {{- if .Values.redis.securityContext.enabled }}
+      securityContext:
+        runAsNonRoot: {{ .Values.redis.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.redis.securityContext.runAsUser }}
+        fsGroup: {{ .Values.redis.securityContext.fsGroup }}
+      {{- end }}
+      {{- $nodeSelector := deepCopy (default (dict) .Values.global.nodeSelector) }}
+      {{- $nodeSelector = merge $nodeSelector (default (dict) .Values.redis.nodeSelector) }}
+      {{- if $nodeSelector }}
+      nodeSelector:
+        {{- toYaml $nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- $tolerations := concat (default (list) .Values.global.tolerations) (default (list) .Values.redis.tolerations) }}
+      {{- if $tolerations }}
+      tolerations:
+        {{- toYaml $tolerations | nindent 8 }}
+      {{- end }}
+      {{- $affinity := deepCopy (default (dict) .Values.global.affinity) }}
+      {{- $affinity = merge $affinity (default (dict) .Values.redis.affinity) }}
+      {{- if $affinity }}
+      affinity:
+        {{- toYaml $affinity | nindent 8 }}
+      {{- end }}
+      {{- $pullSecrets := concat (default (list) .Values.global.imagePullSecrets) (default (list) .Values.redis.imagePullSecrets) }}
+      {{- if $pullSecrets }}
+      imagePullSecrets:
+        {{- range $pullSecrets }}
+        - name: {{ .name | default . }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: redis
+          image: {{ printf "%s:%s" .Values.redis.image.repository .Values.redis.image.tag }}
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          command:
+            {{- toYaml .Values.redis.command | nindent 12 }}
+          args:
+            {{- toYaml .Values.redis.args | nindent 12 }}
+          ports:
+            - containerPort: {{ .Values.redis.service.port }}
+              name: redis
+          {{- if .Values.redis.containerSecurityContext }}
+          securityContext:
+            {{- toYaml .Values.redis.containerSecurityContext | nindent 12 }}
+          {{- end }}
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: REDIS_PASSWORD
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+          readinessProbe:
+            exec:
+              command:
+                {{- toYaml .Values.redis.readinessProbe.command | nindent 16 }}
+            initialDelaySeconds: {{ .Values.redis.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.redis.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.redis.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.redis.readinessProbe.failureThreshold }}
+          livenessProbe:
+            exec:
+              command:
+                {{- toYaml .Values.redis.livenessProbe.command | nindent 16 }}
+            initialDelaySeconds: {{ .Values.redis.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.redis.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.redis.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.redis.livenessProbe.failureThreshold }}
+      volumes:
+        {{- if not $persistenceEnabled }}
+        - name: redis-data
+          emptyDir: {}
+        {{- end }}
+  {{- if $persistenceEnabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes:
+          {{- toYaml .Values.redis.persistence.accessModes | nindent 8 }}
+        {{- if .Values.redis.persistence.storageClass }}
+        storageClassName: {{ .Values.redis.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.redis.persistence.size }}
+  {{- end }}
+{{- end }}

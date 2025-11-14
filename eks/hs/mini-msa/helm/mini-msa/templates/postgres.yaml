@@ -1,0 +1,189 @@
+{{- if .Values.postgres.enabled -}}
+{{- $root := . -}}
+{{- $ns := include "mini-msa.namespaceName" (dict "root" $root "key" "data") -}}
+{{- $name := include "mini-msa.componentName" (dict "root" $root "suffix" (default "postgres" .Values.postgres.nameSuffix) "override" .Values.postgres.fullnameOverride) -}}
+{{- $serviceName := default (printf "%s-service" $name) .Values.postgres.service.name -}}
+{{- $secretName := default .Values.secrets.postgres.name .Values.postgres.secretName -}}
+{{- if not $secretName }}
+{{- fail "postgres.secretName (or secrets.postgres.name) is required" }}
+{{- end -}}
+{{- $clusterDomain := default "cluster.local" .Values.global.clusterDomain -}}
+{{- $initConfigName := printf "%s-init" $name -}}
+{{- $persistenceEnabled := and .Values.postgres.persistence.enabled .Values.postgres.persistence.size }}
+{{- if .Values.postgres.initSql }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $initConfigName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "mini-msa.componentLabels" (dict "root" $root "component" "postgres-init") | nindent 4 }}
+    {{- with .Values.global.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+data:
+  init-db.sql: |
+{{ .Values.postgres.initSql | nindent 4 }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $serviceName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "mini-msa.componentLabels" (dict "root" $root "component" "postgres-service") | nindent 4 }}
+    {{- with .Values.global.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    app: postgres
+spec:
+  type: ClusterIP
+  ports:
+    - name: postgres
+      port: {{ .Values.postgres.service.port }}
+      targetPort: {{ .Values.postgres.service.port }}
+      protocol: TCP
+  selector:
+    {{- include "mini-msa.selectorLabels" $root | nindent 4 }}
+    app.kubernetes.io/component: postgres
+    app: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "mini-msa.componentLabels" (dict "root" $root "component" "postgres") | nindent 4 }}
+    {{- with .Values.global.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    app: postgres
+spec:
+  serviceName: {{ $serviceName }}
+  replicas: {{ .Values.postgres.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mini-msa.selectorLabels" $root | nindent 6 }}
+      app.kubernetes.io/component: postgres
+      app: postgres
+  template:
+    metadata:
+      labels:
+        {{- include "mini-msa.selectorLabels" $root | nindent 8 }}
+        app.kubernetes.io/component: postgres
+        {{- with .Values.global.commonLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        app: postgres
+    spec:
+      {{- if .Values.postgres.securityContext.enabled }}
+      securityContext:
+        runAsNonRoot: {{ .Values.postgres.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.postgres.securityContext.runAsUser }}
+        fsGroup: {{ .Values.postgres.securityContext.fsGroup }}
+      {{- end }}
+      {{- $nodeSelector := deepCopy (default (dict) .Values.global.nodeSelector) }}
+      {{- $nodeSelector = merge $nodeSelector (default (dict) .Values.postgres.nodeSelector) }}
+      {{- if $nodeSelector }}
+      nodeSelector:
+        {{- toYaml $nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- $tolerations := concat (default (list) .Values.global.tolerations) (default (list) .Values.postgres.tolerations) }}
+      {{- if $tolerations }}
+      tolerations:
+        {{- toYaml $tolerations | nindent 8 }}
+      {{- end }}
+      {{- $affinity := deepCopy (default (dict) .Values.global.affinity) }}
+      {{- $affinity = merge $affinity (default (dict) .Values.postgres.affinity) }}
+      {{- if $affinity }}
+      affinity:
+        {{- toYaml $affinity | nindent 8 }}
+      {{- end }}
+      {{- $pullSecrets := concat (default (list) .Values.global.imagePullSecrets) (default (list) .Values.postgres.imagePullSecrets) }}
+      {{- if $pullSecrets }}
+      imagePullSecrets:
+        {{- range $pullSecrets }}
+        - name: {{ .name | default . }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: postgres
+          image: {{ printf "%s:%s" .Values.postgres.image.repository .Values.postgres.image.tag }}
+          imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.postgres.service.port }}
+              name: postgres
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: POSTGRES_DB
+            - name: PGDATA
+              value: {{ .Values.postgres.pgDataDir | quote }}
+          {{- if .Values.postgres.containerSecurityContext }}
+          securityContext:
+            {{- toYaml .Values.postgres.containerSecurityContext | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: postgres-data
+              mountPath: {{ .Values.postgres.dataMountPath }}
+            {{- if .Values.postgres.initSql }}
+            - name: init-script
+              mountPath: /docker-entrypoint-initdb.d
+            {{- end }}
+          resources:
+            {{- toYaml .Values.postgres.resources | nindent 12 }}
+          readinessProbe:
+            exec:
+              command:
+                {{- toYaml .Values.postgres.readinessProbe.command | nindent 16 }}
+            initialDelaySeconds: {{ .Values.postgres.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.postgres.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.postgres.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.postgres.readinessProbe.failureThreshold }}
+          livenessProbe:
+            exec:
+              command:
+                {{- toYaml .Values.postgres.livenessProbe.command | nindent 16 }}
+            initialDelaySeconds: {{ .Values.postgres.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.postgres.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.postgres.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.postgres.livenessProbe.failureThreshold }}
+      volumes:
+        {{- if .Values.postgres.initSql }}
+        - name: init-script
+          configMap:
+            name: {{ $initConfigName }}
+        {{- end }}
+        {{- if not $persistenceEnabled }}
+        - name: postgres-data
+          emptyDir: {}
+        {{- end }}
+  {{- if $persistenceEnabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes:
+          {{- toYaml .Values.postgres.persistence.accessModes | nindent 8 }}
+        {{- if .Values.postgres.persistence.storageClass }}
+        storageClassName: {{ .Values.postgres.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgres.persistence.size }}
+  {{- end }}
+{{- end }}
