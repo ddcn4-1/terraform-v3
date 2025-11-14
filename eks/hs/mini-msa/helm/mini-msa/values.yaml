@@ -440,3 +440,22 @@ redis:
 monitoring:
   prometheus:
     enabled: false
+  dashboard:
+    enabled: true
+  kubeview:
+    enabled: true
+    image:
+      repository: ghcr.io/benc-uk/kubeview
+      tag: "0.1.31"
+      pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP
+      port: 8000
+      # nodePort: 30080  # Set this if type is NodePort
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi

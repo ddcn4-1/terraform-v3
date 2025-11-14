@@ -25,3 +25,7 @@ dependencies:
     version: "54.2.2"
     repository: "https://prometheus-community.github.io/helm-charts"
     condition: monitoring.prometheus.enabled
+  - name: kubernetes-dashboard
+    version: "7.14.0"
+    repository: "https://kubernetes.github.io/dashboard/"
+    condition: monitoring.dashboard.enabled

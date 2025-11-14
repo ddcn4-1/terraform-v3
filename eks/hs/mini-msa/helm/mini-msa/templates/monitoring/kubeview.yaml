@@ -1,0 +1,126 @@
+{{- if .Values.monitoring.kubeview.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubeview
+  namespace: {{ include "mini-msa.namespaceName" (dict "root" . "key" "app") }}
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeview
+rules:
+  - apiGroups: ["extensions", "apps"]
+    resources:
+      - deployments
+      - replicasets
+      - daemonsets
+      - statefulsets
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources:
+      - pods
+      - events
+      - endpoints
+      - namespaces
+      - nodes
+      - persistentvolumes
+      - persistentvolumeclaims
+      - resourcequotas
+      - services
+      - configmaps
+      - secrets
+    verbs: ["get", "list"]
+  - apiGroups: ["networking.k8s.io", "extensions"]
+    resources:
+      - ingresses
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs", "jobs"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubeview
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubeview
+subjects:
+  - kind: ServiceAccount
+    name: kubeview
+    namespace: {{ include "mini-msa.namespaceName" (dict "root" . "key" "app") }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubeview
+  namespace: {{ include "mini-msa.namespaceName" (dict "root" . "key" "app") }}
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+    app: kubeview
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubeview
+  template:
+    metadata:
+      labels:
+        app: kubeview
+        {{- include "mini-msa.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: kubeview
+      containers:
+        - name: kubeview
+          image: {{ .Values.monitoring.kubeview.image.repository }}:{{ .Values.monitoring.kubeview.image.tag }}
+          imagePullPolicy: {{ .Values.monitoring.kubeview.image.pullPolicy }}
+          env:
+            - name: IN_CLUSTER
+              value: "true"
+          ports:
+            - containerPort: 8000
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 3
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 3
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.monitoring.kubeview.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeview
+  namespace: {{ include "mini-msa.namespaceName" (dict "root" . "key" "app") }}
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+    app: kubeview
+spec:
+  type: {{ .Values.monitoring.kubeview.service.type }}
+  ports:
+    - port: {{ .Values.monitoring.kubeview.service.port }}
+      targetPort: 8000
+      protocol: TCP
+      name: http
+      {{- if and (eq .Values.monitoring.kubeview.service.type "NodePort") .Values.monitoring.kubeview.service.nodePort }}
+      nodePort: {{ .Values.monitoring.kubeview.service.nodePort }}
+      {{- end }}
+  selector:
+    app: kubeview
+{{- end }}
