@@ -18,3 +18,10 @@ maintainers:
     email: ops@mini-msa.local
 annotations:
   category: application
+
+# Dependencies
+dependencies:
+  - name: kube-prometheus-stack
+    version: "54.2.2"
+    repository: "https://prometheus-community.github.io/helm-charts"
+    condition: monitoring.prometheus.enabled

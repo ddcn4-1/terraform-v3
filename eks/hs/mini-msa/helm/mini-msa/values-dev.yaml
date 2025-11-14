@@ -52,3 +52,26 @@ postgres:
 redis:
   persistence:
     size: 1Gi
+
+# Monitoring Configuration
+monitoring:
+  prometheus:
+    enabled: true
+    kube-prometheus-stack:
+      prometheus:
+        prometheusSpec:
+          retention: 7d
+          storageSpec:
+            volumeClaimTemplate:
+              spec:
+                resources:
+                  requests:
+                    storage: 20Gi
+      grafana:
+        enabled: true
+        adminPassword: "admin"
+        ingress:
+          enabled: false
+        service:
+          type: ClusterIP
+          port: 80

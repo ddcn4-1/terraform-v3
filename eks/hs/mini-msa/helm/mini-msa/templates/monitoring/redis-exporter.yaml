@@ -1,0 +1,82 @@
+{{- if index .Values "monitoring" "prometheus" "enabled" -}}
+{{- $redisName := include "mini-msa.componentName" (dict "root" . "suffix" (default "redis" .Values.redis.nameSuffix) "override" .Values.redis.fullnameOverride) -}}
+{{- $redisSvcName := default (printf "%s-service" $redisName) .Values.redis.service.name -}}
+{{- $dataNs := include "mini-msa.namespaceName" (dict "root" . "key" "data") -}}
+{{- $clusterDomain := default "cluster.local" .Values.global.clusterDomain -}}
+{{- $redisHost := printf "%s.%s.svc.%s" $redisSvcName $dataNs $clusterDomain -}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mini-msa.fullname" . }}-redis-exporter
+  namespace: {{ include "mini-msa.namespaceName" (dict "root" . "key" "app") }}
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-exporter
+  template:
+    metadata:
+      labels:
+        app: redis-exporter
+    spec:
+      containers:
+        - name: redis-exporter
+          image: oliver006/redis_exporter:v1.55.0
+          ports:
+            - name: metrics
+              containerPort: 9121
+          env:
+            - name: REDIS_ADDR
+              value: "{{ $redisHost }}:{{ .Values.redis.service.port }}"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.redis.name }}
+                  key: REDIS_PASSWORD
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mini-msa.fullname" . }}-redis-exporter
+  namespace: {{ include "mini-msa.namespaceName" (dict "root" . "key" "app") }}
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-exporter
+    app: redis-exporter
+spec:
+  type: ClusterIP
+  selector:
+    app: redis-exporter
+  ports:
+    - name: metrics
+      port: 9121
+      targetPort: metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "mini-msa.fullname" . }}-redis-exporter
+  namespace: {{ include "mini-msa.namespaceName" (dict "root" . "key" "app") }}
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+    release: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app: redis-exporter
+  endpoints:
+    - port: metrics
+      interval: 30s
+{{- end }}

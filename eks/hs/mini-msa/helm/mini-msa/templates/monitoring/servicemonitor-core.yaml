@@ -1,0 +1,21 @@
+{{- if and (index .Values "monitoring" "prometheus" "enabled") (index .Values "coreService" "enabled") -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "mini-msa.fullname" . }}-core-service
+  namespace: {{ include "mini-msa.namespaceName" (dict "root" . "key" "app") }}
+  labels:
+    {{- include "mini-msa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+    release: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app: core-service
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      # TODO: 애플리케이션에 /metrics 엔드포인트 구현 필요
+      # prom-client npm 패키지 사용 권장
+{{- end }}

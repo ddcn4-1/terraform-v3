@@ -435,3 +435,8 @@ redis:
     periodSeconds: 10
     timeoutSeconds: 5
     failureThreshold: 3
+
+# Monitoring Configuration
+monitoring:
+  prometheus:
+    enabled: false
