@@ -1,0 +1,324 @@
+{{- if .Values.queueService.enabled -}}
+{{- $root := . -}}
+{{- $appNs := include "mini-msa.namespaceName" (dict "root" $root "key" "app") -}}
+{{- $dataNs := include "mini-msa.namespaceName" (dict "root" $root "key" "data") -}}
+{{- $queueName := include "mini-msa.componentName" (dict "root" $root "suffix" (default "queue-service" .Values.queueService.nameSuffix) "override" .Values.queueService.fullnameOverride) -}}
+{{- $serviceName := default $queueName .Values.queueService.service.name -}}
+{{- $configMapName := .Values.queueService.configMap.name -}}
+{{- if and (not .Values.queueService.configMap.create) (not $configMapName) }}
+{{- fail "queueService.configMap.name is required when configMap.create is false" }}
+{{- end -}}
+{{- if not $configMapName -}}
+{{- $configMapName = include "mini-msa.componentName" (dict "root" $root "suffix" (default "queue-service-config" .Values.queueService.configMap.nameSuffix) "override" "") -}}
+{{- end -}}
+{{- $coreName := include "mini-msa.componentName" (dict "root" $root "suffix" (default "core-service" .Values.coreService.nameSuffix) "override" .Values.coreService.fullnameOverride) -}}
+{{- $coreServiceName := default $coreName .Values.coreService.service.name -}}
+{{- $clusterDomain := default "cluster.local" .Values.global.clusterDomain -}}
+{{- $coreUrlDefault := printf "http://%s.%s.svc.%s:%v" $coreServiceName $appNs $clusterDomain .Values.coreService.service.port -}}
+{{- $coreUrl := default $coreUrlDefault .Values.queueService.config.coreServiceUrl -}}
+{{- $postgresName := include "mini-msa.componentName" (dict "root" $root "suffix" (default "postgres" .Values.postgres.nameSuffix) "override" .Values.postgres.fullnameOverride) -}}
+{{- $postgresSvcName := default (printf "%s-service" $postgresName) .Values.postgres.service.name -}}
+{{- $postgresHostDefault := printf "%s.%s.svc.%s" $postgresSvcName $dataNs $clusterDomain -}}
+{{- $postgresHost := default $postgresHostDefault .Values.queueService.config.postgresHost -}}
+{{- $redisName := include "mini-msa.componentName" (dict "root" $root "suffix" (default "redis" .Values.redis.nameSuffix) "override" .Values.redis.fullnameOverride) -}}
+{{- $redisSvcName := default (printf "%s-service" $redisName) .Values.redis.service.name -}}
+{{- $redisHostDefault := printf "%s.%s.svc.%s" $redisSvcName $dataNs $clusterDomain -}}
+{{- $redisHost := default $redisHostDefault .Values.queueService.config.redisHost -}}
+{{- $postgresSecret := default .Values.secrets.postgres.name .Values.queueService.secretRefs.postgres -}}
+{{- $redisSecret := default .Values.secrets.redis.name .Values.queueService.secretRefs.redis -}}
+{{- if and (not $postgresSecret) .Values.secrets.postgres.create }}
+{{- fail "PostgreSQL secret name cannot be empty for queue service" }}
+{{- end -}}
+{{- if and (not $redisSecret) .Values.secrets.redis.create }}
+{{- fail "Redis secret name cannot be empty for queue service" }}
+{{- end -}}
+{{- if .Values.queueService.configMap.create }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $configMapName }}
+  namespace: {{ $appNs }}
+  labels:
+    {{- include "mini-msa.componentLabels" (dict "root" $root "component" "queue-config") | nindent 4 }}
+    {{- with $root.Values.global.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+data:
+  PORT: {{ .Values.queueService.config.port | quote }}
+  SERVICE_NAME: {{ default $serviceName .Values.queueService.config.serviceName | quote }}
+  CORE_SERVICE_URL: {{ $coreUrl | quote }}
+  NODE_ENV: {{ .Values.queueService.config.nodeEnv | quote }}
+  POSTGRES_HOST: {{ $postgresHost | quote }}
+  POSTGRES_PORT: {{ .Values.queueService.config.postgresPort | quote }}
+  REDIS_HOST: {{ $redisHost | quote }}
+  REDIS_PORT: {{ .Values.queueService.config.redisPort | quote }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $queueName }}
+  namespace: {{ $appNs }}
+  labels:
+    {{- include "mini-msa.componentLabels" (dict "root" $root "component" "queue") | nindent 4 }}
+    app: queue-service
+    {{- with .Values.global.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.queueService.podLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  replicas: {{ .Values.queueService.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mini-msa.selectorLabels" $root | nindent 6 }}
+      app.kubernetes.io/component: queue
+      app: queue-service
+  template:
+    metadata:
+      labels:
+        {{- include "mini-msa.selectorLabels" $root | nindent 8 }}
+        app.kubernetes.io/component: queue
+        app: queue-service
+        {{- with .Values.global.commonLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.queueService.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.queueService.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ if .Values.queueService.serviceAccount.create }}{{ default (printf "%s-sa" $queueName) .Values.queueService.serviceAccount.name }}{{ else }}{{ default "default" .Values.queueService.serviceAccount.name }}{{ end }}
+      {{- $nodeSelector := deepCopy (default (dict) .Values.global.nodeSelector) }}
+      {{- $nodeSelector = merge $nodeSelector (default (dict) .Values.queueService.nodeSelector) }}
+      {{- if $nodeSelector }}
+      nodeSelector:
+        {{- toYaml $nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- $tolerations := concat (default (list) .Values.global.tolerations) (default (list) .Values.queueService.tolerations) }}
+      {{- if $tolerations }}
+      tolerations:
+        {{- toYaml $tolerations | nindent 8 }}
+      {{- end }}
+      {{- $affinity := deepCopy (default (dict) .Values.global.affinity) }}
+      {{- $affinity = merge $affinity (default (dict) .Values.queueService.affinity) }}
+      {{- if $affinity }}
+      affinity:
+        {{- toYaml $affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.queueService.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml .Values.queueService.topologySpreadConstraints | nindent 8 }}
+      {{- end }}
+      {{- if .Values.queueService.securityContext.enabled }}
+      securityContext:
+        runAsNonRoot: {{ .Values.queueService.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.queueService.securityContext.runAsUser }}
+        fsGroup: {{ .Values.queueService.securityContext.fsGroup }}
+      {{- end }}
+      {{- $pullSecrets := concat (default (list) .Values.global.imagePullSecrets) (default (list) .Values.queueService.imagePullSecrets) }}
+      {{- if $pullSecrets }}
+      imagePullSecrets:
+        {{- range $pullSecrets }}
+        - name: {{ .name | default . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.queueService.initContainers.waitForPostgres .Values.queueService.initContainers.waitForRedis .Values.queueService.extraInitContainers }}
+      initContainers:
+        {{- if .Values.queueService.initContainers.waitForPostgres }}
+        - name: wait-for-postgres
+          image: {{ .Values.global.waitFor.image }}
+          imagePullPolicy: {{ .Values.global.waitFor.imagePullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ $postgresSvcName }}.{{ $dataNs }}.svc.{{ $clusterDomain }} {{ .Values.postgres.service.port }}; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+              echo "PostgreSQL is ready!"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.global.waitFor.resources | nindent 12 }}
+        {{- end }}
+        {{- if .Values.queueService.initContainers.waitForRedis }}
+        - name: wait-for-redis
+          image: {{ .Values.global.waitFor.image }}
+          imagePullPolicy: {{ .Values.global.waitFor.imagePullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ $redisSvcName }}.{{ $dataNs }}.svc.{{ $clusterDomain }} {{ .Values.redis.service.port }}; do
+                echo "Waiting for Redis..."
+                sleep 2
+              done
+              echo "Redis is ready!"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.global.waitFor.resources | nindent 12 }}
+        {{- end }}
+        {{- with .Values.queueService.extraInitContainers }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.queueService.priorityClassName }}
+      priorityClassName: {{ .Values.queueService.priorityClassName }}
+      {{- end }}
+      containers:
+        - name: {{ $queueName }}
+          image: {{ printf "%s:%s" .Values.queueService.image.repository .Values.queueService.image.tag }}
+          imagePullPolicy: {{ .Values.queueService.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.queueService.service.targetPort }}
+              name: http
+          {{- if .Values.queueService.containerSecurityContext }}
+          securityContext:
+            {{- toYaml .Values.queueService.containerSecurityContext | nindent 12 }}
+          {{- end }}
+          {{- $volumeMounts := concat (default (list) .Values.queueService.volumeMounts) (default (list) .Values.queueService.extraVolumeMounts) }}
+          {{- if $volumeMounts }}
+          volumeMounts:
+            {{- toYaml $volumeMounts | nindent 12 }}
+          {{- end }}
+          env:
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ $configMapName }}
+                  key: PORT
+            - name: SERVICE_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ $configMapName }}
+                  key: SERVICE_NAME
+            - name: CORE_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ $configMapName }}
+                  key: CORE_SERVICE_URL
+            - name: NODE_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ $configMapName }}
+                  key: NODE_ENV
+            - name: POSTGRES_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ $configMapName }}
+                  key: POSTGRES_HOST
+            - name: POSTGRES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ $configMapName }}
+                  key: POSTGRES_PORT
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ $configMapName }}
+                  key: REDIS_HOST
+            - name: REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ $configMapName }}
+                  key: REDIS_PORT
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecret }}
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecret }}
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecret }}
+                  key: POSTGRES_DB
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $redisSecret }}
+                  key: REDIS_PASSWORD
+            {{- with .Values.queueService.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.queueService.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.queueService.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.queueService.probes.liveness.path }}
+              port: {{ .Values.queueService.service.targetPort }}
+            initialDelaySeconds: {{ .Values.queueService.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.queueService.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.queueService.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.queueService.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.queueService.probes.readiness.path }}
+              port: {{ .Values.queueService.service.targetPort }}
+            initialDelaySeconds: {{ .Values.queueService.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.queueService.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.queueService.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.queueService.probes.readiness.failureThreshold }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.queueService.probes.startup.path }}
+              port: {{ .Values.queueService.service.targetPort }}
+            periodSeconds: {{ .Values.queueService.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.queueService.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ .Values.queueService.probes.startup.failureThreshold }}
+      {{- $volumes := concat (default (list) .Values.queueService.volumes) (default (list) .Values.queueService.extraVolumes) }}
+      {{- if $volumes }}
+      volumes:
+        {{- toYaml $volumes | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $serviceName }}
+  namespace: {{ $appNs }}
+  labels:
+    {{- include "mini-msa.componentLabels" (dict "root" $root "component" "queue-service") | nindent 4 }}
+    {{- with .Values.global.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    app: queue-service
+spec:
+  type: {{ .Values.queueService.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.queueService.service.port }}
+      targetPort: {{ .Values.queueService.service.targetPort }}
+      protocol: TCP
+  selector:
+    {{- include "mini-msa.selectorLabels" $root | nindent 4 }}
+    app.kubernetes.io/component: queue
+    app: queue-service
+{{- end }}

@@ -1,0 +1,54 @@
+# Development overrides (Docker Desktop / kind)
+global:
+  commonLabels:
+    environment: dev
+  nodeSelector: {}
+  tolerations: []
+
+coreService:
+  replicaCount: 1
+  image:
+    repository: core-service
+    tag: latest
+  service:
+    type: NodePort
+    nodePort: 30002
+  ingress:
+    enabled: true
+    hosts:
+      - host: mini-msa.local
+        paths:
+          - path: /
+            pathType: Prefix
+  additionalIngresses:
+    alb:
+      enabled: false
+  config:
+    nodeEnv: development
+  resources:
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+queueService:
+  replicaCount: 1
+  image:
+    repository: queue-service
+    tag: latest
+  service:
+    type: NodePort
+    nodePort: 30001
+  config:
+    nodeEnv: development
+  resources:
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+postgres:
+  persistence:
+    size: 1Gi
+
+redis:
+  persistence:
+    size: 1Gi

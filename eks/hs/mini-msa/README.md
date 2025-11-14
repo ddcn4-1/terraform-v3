@@ -9,11 +9,14 @@
 - [빠른 시작](#빠른-시작)
   - [Docker Compose로 시작](#docker-compose로-시작)
   - [Kubernetes로 시작](#kubernetes로-시작)
+  - [Helm으로 시작](#helm으로-시작)
 - [프로젝트 구조](#프로젝트-구조)
 - [API 엔드포인트](#api-엔드포인트)
 - [환경 변수](#환경-변수)
 - [데이터베이스 관리](#데이터베이스-관리)
 - [Kubernetes 배포](#kubernetes-배포)
+  - [kubectl vs Helm 비교](#kubectl-vs-helm-비교)
+  - [Helm 배포 가이드](#helm-배포-가이드)
 - [린팅 및 품질 관리](#린팅-및-품질-관리)
 - [보안 관리](#보안-관리)
 - [모니터링 및 로깅](#모니터링-및-로깅)
@@ -188,6 +191,51 @@ make test
 
 ---
 
+### Helm으로 시작
+
+Helm을 사용하면 더 간편하게 배포하고 관리할 수 있습니다.
+
+**전제 조건**:
+- Kubernetes 클러스터 (Docker Desktop, Minikube, Kind, EKS 등)
+- Helm 3.x 설치
+- kubectl CLI
+
+**빠른 시작**:
+
+```bash
+# 1. Helm 의존성 다운로드 및 배포
+make helm-install
+
+# 2. 배포 상태 확인
+make helm-status
+
+# 3. 애플리케이션 접근
+curl http://localhost:30002/health
+# 또는
+curl http://mini-msa.local/health  # /etc/hosts에 127.0.0.1 mini-msa.local 추가 필요
+```
+
+> 환경별 값 파일을 바꾸고 싶다면 `helm install mini-msa helm/mini-msa -f helm/mini-msa/values-prod.yaml` 처럼 `-f` 옵션만 교체하면 됩니다.
+
+**주요 Helm 명령어**:
+```bash
+# 업그레이드
+make helm-upgrade
+
+# 상태 확인
+make helm-status
+
+# 롤백
+make helm-rollback
+
+# 제거
+make helm-uninstall
+```
+
+자세한 Helm 사용법은 [helm/README.md](helm/README.md)를 참고하세요.
+
+---
+
 
 ## 프로젝트 구조
 
@@ -203,7 +251,9 @@ mini-msa/
 │   ├── k8s-setup.sh                # Kubernetes 자동 설정
 │   ├── k8s-test.sh                 # Kubernetes 통합 테스트
 │   ├── k8s-cleanup.sh              # Kubernetes 리소스 정리
-│   └── lint-all.sh                 # 전체 린팅 실행
+│   ├── helm-test.sh                # Helm 차트 테스트
+│   ├── helm-reset.sh               # Helm 리셋 스크립트
+│   └── preflight-check.sh          # 사전 검증 스크립트
 │
 ├── queue-service/                  # Queue 마이크로서비스
 │   ├── Dockerfile                  # 멀티 스테이지 빌드
@@ -217,7 +267,7 @@ mini-msa/
 │   ├── .env                        # 환경 변수
 │   └── index.js                    # 서비스 구현
 │
-├── k8s/                            # Kubernetes 매니페스트
+├── k8s/                            # Kubernetes 매니페스트 (kubectl 방식)
 │   └── base/                       # 기본 리소스
 │       ├── namespace-app.yaml      # 애플리케이션 네임스페이스
 │       ├── namespace-data.yaml     # 데이터 네임스페이스
@@ -227,8 +277,25 @@ mini-msa/
 │       ├── queue-service/          # Queue Service Deployment
 │       └── core-service/           # Core Service Deployment
 │
-├── .kube-linter.yaml               # Kubernetes 린팅 설정
-└── .yamllint                       # YAML 린팅 설정
+├── helm/                           # Helm 차트 (Helm 방식)
+│   └── mini-msa/                   # Mini MSA Helm Chart
+│       ├── Chart.yaml              # 차트 메타데이터
+│       ├── values.yaml             # 프로덕션 기본 설정
+│       ├── values-dev.yaml         # 개발 환경 설정
+│       ├── values-prod.yaml        # 프로덕션 환경 설정
+│       ├── rendered.yaml           # 렌더링된 매니페스트 (참고용)
+│       └── templates/              # Kubernetes 리소스 템플릿
+│           ├── NOTES.txt           # 설치 후 안내 메시지
+│           ├── _helpers.tpl        # 템플릿 헬퍼 함수
+│           ├── namespaces.yaml     # 네임스페이스 정의
+│           ├── secrets.yaml        # 시크릿 관리
+│           ├── serviceaccounts.yaml # 서비스 계정
+│           ├── postgres.yaml       # PostgreSQL StatefulSet
+│           ├── redis.yaml          # Redis StatefulSet
+│           ├── queue-service.yaml  # Queue Service Deployment
+│           └── core-service.yaml   # Core Service Deployment
+│
+└── .kube-linter.yaml               # Kubernetes 린팅 설정
 ```
 
 ---
@@ -401,6 +468,101 @@ FLUSHALL
 ---
 
 ## Kubernetes 배포
+
+### kubectl vs Helm 비교
+
+이 프로젝트는 **kubectl (매니페스트 파일)**과 **Helm (패키지 관리자)** 두 가지 배포 방식을 모두 지원합니다.
+
+#### 비교표
+
+| 특징 | kubectl (k8s/base/) | Helm (helm/mini-msa/) |
+|------|---------------------|----------------------|
+| **배포 명령어** | `kubectl apply -f k8s/base/` | `helm install mini-msa helm/mini-msa` |
+| **업그레이드** | `kubectl apply -f k8s/base/` (동일) | `helm upgrade mini-msa helm/mini-msa` |
+| **롤백** | 수동 복원 필요 | `helm rollback mini-msa` (자동) |
+| **버전 관리** | Git으로만 관리 | Helm이 릴리스 히스토리 관리 |
+| **환경별 설정** | 별도 디렉토리/파일 필요 | values-dev.yaml, values-prod.yaml |
+| **의존성 관리** | 수동 설치 | Chart.yaml에 정의 (자동) |
+| **변수 치환** | 불가능 (하드코딩) | `{{ .Values.* }}` 템플릿 |
+| **재사용성** | 낮음 | 높음 (차트 공유 가능) |
+| **학습 곡선** | 낮음 | 중간 |
+| **설정 복잡도** | 간단 | 중간 |
+
+#### 언제 kubectl을 사용할까?
+
+✅ **사용 권장**:
+- 간단한 프로젝트 (5개 이하 리소스)
+- 학습 목적
+- 빠른 프로토타이핑
+- 커스터마이징이 거의 없는 경우
+
+```bash
+# 장점: 간단하고 직관적
+kubectl apply -f k8s/base/
+kubectl get pods
+kubectl delete -f k8s/base/
+```
+
+❌ **사용 비권장**:
+- 환경별 설정이 다른 경우 (dev, staging, prod)
+- 복잡한 의존성 (PostgreSQL, Redis 등)
+- 버전 관리 및 롤백이 중요한 경우
+- 팀 협업 환경
+
+#### 언제 Helm을 사용할까?
+
+✅ **사용 권장**:
+- 프로덕션 환경
+- 여러 환경 관리 (dev/staging/prod)
+- 복잡한 의존성 (데이터베이스, 캐시 등)
+- 버전 관리 및 롤백 필요
+- 팀 협업 및 CI/CD 파이프라인
+
+```bash
+# 장점: 강력한 기능과 관리 용이성
+helm install mini-msa helm/mini-msa -f helm/mini-msa/values-dev.yaml
+helm upgrade mini-msa helm/mini-msa -f helm/mini-msa/values-prod.yaml
+helm rollback mini-msa
+helm history mini-msa
+```
+
+❌ **사용 비권장**:
+- Kubernetes 초보자 (기본 개념 학습 단계)
+- 매우 간단한 애플리케이션
+
+#### 실전 예제: 환경별 배포
+
+**kubectl 방식**:
+```bash
+# dev 환경
+kubectl apply -f k8s/dev/
+
+# prod 환경
+kubectl apply -f k8s/prod/
+
+# 문제: 파일 중복, 관리 어려움
+```
+
+**Helm 방식**:
+```bash
+# dev 환경
+helm install mini-msa helm/mini-msa -f helm/mini-msa/values-dev.yaml
+
+# prod 환경
+helm install mini-msa helm/mini-msa -f helm/mini-msa/values-prod.yaml
+
+# 장점: 단일 차트, 다중 환경 설정
+```
+
+#### 이 프로젝트에서의 권장사항
+
+- **학습/개발**: kubectl로 시작 (`make k8s-setup`)
+- **프로덕션**: Helm 사용 (`make helm-install`)
+- **CI/CD**: Helm + ArgoCD 또는 Flux
+
+자세한 Helm 차트 구조는 `helm/mini-msa/` 디렉토리를 참고하세요.
+
+---
 
 ### 네임스페이스 구조
 
@@ -605,8 +767,6 @@ External Secrets Operator는 EKS 환경에서 **업계 표준**입니다:
 **참고**:
 - [AWS 공식 가이드 - Use AWS Secrets Manager secrets with Amazon EKS Pods](https://docs.aws.amazon.com/eks/latest/userguide/manage-secrets.html)
 - [EKS Workshop - External Secrets Operator](https://www.eksworkshop.com/docs/security/secrets-management/secrets-manager/external-secrets)
-
-자세한 구현 가이드: [k8s/SECRET-MANAGEMENT-EKS.md](k8s/SECRET-MANAGEMENT-EKS.md)
 
 ---
 
@@ -929,13 +1089,6 @@ jobs:
 - [Docker Compose 문서](https://docs.docker.com/compose/)
 - [External Secrets Operator](https://external-secrets.io/)
 - [Prometheus Operator](https://prometheus-operator.dev/)
-
-### 추가 프로젝트 문서
-
-- [Docker Desktop 빠른 시작](DOCKER-DESKTOP-SETUP.md)
-- [Kubernetes 전체 배포 가이드](README-k8s.md)
-- [린팅 및 품질 관리](LINTING.md)
-- [EKS Secret Management](k8s/SECRET-MANAGEMENT-EKS.md)
 
 ---
 
