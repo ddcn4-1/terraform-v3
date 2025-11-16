@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: ticketing-system-queue
+  name: ticketing-system-queue
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ticketing-system-queue
+  strategy: {}
+  template:
+    metadata:
+      labels:
+        app: ticketing-system-queue
+    spec:
+      containers:
+      - image: 968190279976.dkr.ecr.ap-northeast-2.amazonaws.com/ddcn41/msa/queue 
+        name: main
+        envFrom:
+        - configMapRef:
+            name: queue-service-config
+        - secretRef:
+            name: backend-need-endpoint
+        - secretRef:
+            name: backend-need-key
+        resources:
+          limits: 
+            memory: 512Mi
+      imagePullSecrets:
+      - name: regcred
+status: {}

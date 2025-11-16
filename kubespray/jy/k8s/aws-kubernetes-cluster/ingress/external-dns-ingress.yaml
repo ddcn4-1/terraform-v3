@@ -1,0 +1,45 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ticket-ingress
+  annotations:
+    # ALB 설정
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: instance
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    
+    # ALB tag
+    alb.ingress.kubernetes.io/tags: Environment=test,Project=ticket
+    
+    # ALB Security Groups
+    alb.ingress.kubernetes.io/security-groups: sg-08e582337ce57ec53
+    
+    # external-dns를 이용해 Route 53에 자동으로 ALB로 라우팅되는 A 레코드 등록
+    external-dns.alpha.kubernetes.io/hostname: api.test.domain.com
+spec:
+  ingressClassName: alb
+  rules:
+    - host: api.test.domain.com
+      http:
+        paths:
+        - path: /v1
+          pathType: Prefix
+          backend:
+            service:
+              name: ticketing-main-service
+              port:
+                number: 8080
+        - path: /v1/admin
+          pathType: Prefix
+          backend:
+            service:
+              name: ticketing-admin-service
+              port:
+                number: 8080
+        - path: /v1/queue
+          pathType: Prefix
+          backend:
+            service:
+              name: ticketing-queue-service
+              port:
+                number: 8080
