@@ -1,0 +1,14 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# 민감 정보
+terraform.tfvars
+*.tfvars
+!terraform.tfvars.example
+
+# SSH Keys
+*.pem
+*.key

@@ -1,0 +1,63 @@
+# terraform.tfvars.example
+# 목적: 변수 값 예시 제공 (실제 사용 시 .tfvars로 복사)
+# 사용법: cp terraform.tfvars.example terraform.tfvars
+
+# ==========================================
+# 기본 설정
+# ==========================================
+aws_region  = "ap-northeast-2"
+environment = "prod"
+
+# ==========================================
+# 보안 설정
+# ==========================================
+# ⚠️ 실제 관리자 IP로 변경 필요!
+allowed_ssh_cidr = "1.2.3.4/32"
+
+# ⚠️ 사전에 AWS에서 생성한 Key Pair 이름
+# aws ec2 create-key-pair --key-name ddcn41-key --query 'KeyMaterial' --output text > ddcn41-key.pem
+key_pair_name = "ddcn41-key"
+
+# ==========================================
+# Kubernetes 설정
+# ==========================================
+k8s_cluster_name  = "kubernetes-pjy"
+worker_node_count = 2
+
+# ==========================================
+# RDS 설정
+# ==========================================
+db_name     = "ticketdb"
+db_username = "dbadmin"
+
+# ⚠️ 보안: 실제 비밀번호는 환경변수 또는 Secrets Manager 사용 권장
+# export TF_VAR_db_password="your-secure-password"
+# 또는 terraform apply -var="db_password=your-secure-password"
+db_password = "CHANGE_ME_SECURE_PASSWORD"
+db_multi_az = false
+
+# ==========================================
+# ElastiCache 설정
+# ==========================================
+redis_num_cache_nodes = 1
+
+# ==========================================
+# S3 버킷 이름
+# ==========================================
+s3_bucket_names = {
+  main     = "ddcn41-main-frontend"
+  accounts = "ddcn41-accounts-frontend"
+  admin    = "ddcn41-admin-frontend"
+}
+
+# ==========================================
+# Route 53
+# ==========================================
+domain_name = "ddcn41.com"
+
+# ==========================================
+# 기능 활성화
+# ==========================================
+enable_waf        = true
+enable_cloudtrail = true
+enable_nat_gateway = false  # NAT Instance 사용
