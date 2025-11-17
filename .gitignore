@@ -31,7 +31,7 @@ terraform.rc
 *.key
 
 # Kubespray
-kubespray/
+kubespray/*
 !kubespray/hj/
 !kubespray/jy/
 inventory/backup/
