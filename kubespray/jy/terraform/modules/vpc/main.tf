@@ -9,14 +9,14 @@ resource "aws_vpc" "main" {
   cidr_block = var.vpc_cidr
 
   # DNS 설정 (중요!)
-  enable_dns_hostnames = var.enable_dns_hostnames  # EC2에 DNS 호스트네임 할당
-  enable_dns_support   = var.enable_dns_support    # VPC 내 DNS 해석 활성화
+  enable_dns_hostnames = var.enable_dns_hostnames # EC2에 DNS 호스트네임 할당
+  enable_dns_support   = var.enable_dns_support   # VPC 내 DNS 해석 활성화
 
   # 태그
   tags = merge(
     local.common_tags,
     {
-      Name = "${local.name_prefix}-vpc"
+      Name                                   = "${local.name_prefix}-vpc"
       "kubernetes.io/cluster/kubernetes-pjy" = "shared"
     }
   )
@@ -58,9 +58,9 @@ resource "aws_subnet" "public" {
       Name = "${local.name_prefix}-public-${each.key}"
       Tier = "Public"
       AZ   = each.key
-      
+
       # Kubernetes AWS Load Balancer Controller용 태그
-      "kubernetes.io/role/elb" = "1"
+      "kubernetes.io/role/elb"               = "1"
       "kubernetes.io/cluster/kubernetes-pjy" = "shared"
     }
   )
@@ -86,9 +86,9 @@ resource "aws_subnet" "private" {
       Name = "${local.name_prefix}-private-${each.key}"
       Tier = "Private"
       AZ   = each.key
-      
+
       # Kubernetes AWS Load Balancer Controller용 태그
-      "kubernetes.io/role/internal-elb" = "1"
+      "kubernetes.io/role/internal-elb"      = "1"
       "kubernetes.io/cluster/kubernetes-pjy" = "shared"
     }
   )
@@ -172,7 +172,7 @@ resource "aws_route_table_association" "public" {
 # Route Table - Private (AZ별)
 # ==========================================
 
-# AZ별로 Private Route Table 생성 (NAT Instance는 AZ-A에만)
+# AZ별로 Private Route Table 생성
 resource "aws_route_table" "private" {
   for_each = var.private_subnet_cidrs
 
@@ -205,3 +205,4 @@ resource "aws_route_table_association" "private" {
   subnet_id      = each.value.id
   route_table_id = aws_route_table.private[each.key].id
 }
+

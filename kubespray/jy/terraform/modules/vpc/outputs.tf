@@ -85,12 +85,6 @@ output "private_route_table_ids" {
   }
 }
 
-# NAT Instance용: AZ-A Private Route Table ID
-output "private_route_table_a_id" {
-  description = "Private Route Table A ID (NAT Instance 라우트 추가용)"
-  value       = aws_route_table.private["a"].id
-}
-
 # ==========================================
 # Gateway 정보
 # ==========================================

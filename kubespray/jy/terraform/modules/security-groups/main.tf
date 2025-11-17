@@ -189,13 +189,15 @@ resource "aws_security_group_rule" "nat_instance_ingress_https" {
 
 # NAT Instance Inbound: SSH from Bastion (관리용)
 resource "aws_security_group_rule" "nat_instance_ingress_ssh" {
-  type                     = "ingress"
-  from_port                = 22
-  to_port                  = 22
-  protocol                 = "tcp"
-  source_security_group_id = aws_security_group.bastion.id
-  description              = "Allow SSH from bastion"
-  security_group_id        = aws_security_group.nat_instance.id
+  count = length(local.all_ssh_cidrs)
+
+  type              = "ingress"
+  from_port         = 22
+  to_port           = 22
+  protocol          = "tcp"
+  cidr_blocks       = [local.all_ssh_cidrs[count.index]]
+  description       = "Allow SSH from admin IP ${local.all_ssh_cidrs[count.index]}"
+  security_group_id = aws_security_group.nat_instance.id
 }
 
 # NAT Instance Outbound: HTTP to Internet

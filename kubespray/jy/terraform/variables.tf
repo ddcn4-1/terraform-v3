@@ -35,10 +35,10 @@ variable "environment" {
 variable "allowed_ssh_cidr" {
   description = "Bastion Host SSH 접근 허용 IP (관리자 IP)"
   type        = string
-  
+
   # 보안을 위해 기본값 없음 - 반드시 명시적으로 설정
   # terraform.tfvars에서 설정 필요
-  
+
   validation {
     condition     = can(cidrhost(var.allowed_ssh_cidr, 0))
     error_message = "올바른 CIDR 형식이어야 합니다. (예: 1.2.3.4/32)"
@@ -48,7 +48,7 @@ variable "allowed_ssh_cidr" {
 variable "enable_nat_gateway" {
   description = "NAT Gateway 사용 여부 (false면 NAT Instance 사용)"
   type        = bool
-  default     = false  # 교육 목적으로 NAT Instance 사용
+  default     = false # 교육 목적으로 NAT Instance 사용
 }
 
 # ==========================================
@@ -58,7 +58,7 @@ variable "enable_nat_gateway" {
 variable "key_pair_name" {
   description = "EC2 SSH 접근용 Key Pair 이름"
   type        = string
-  
+
   # 사전에 AWS에서 생성된 Key Pair 이름
   # aws ec2 create-key-pair --key-name ddcn41-key 로 생성
 }
@@ -80,6 +80,29 @@ variable "worker_node_count" {
   }
 }
 
+variable "k8s_version" {
+  description = "Kubernetes version"
+  type        = string
+  default     = "v1.34.1"
+}
+
+variable "kubespray_version" {
+  description = "Kubespray version"
+  type        = string
+  default     = "2.29"
+}
+
+variable "root_volume_size" {
+  description = "EC2 EBS volume size (GB)"
+  type        = number
+  default     = 20
+}
+
+variable "root_volume_type" {
+  description = "EC2 EBS volume type"
+  type        = string
+  default     = "gp3"
+}
 # ==========================================
 # RDS 설정
 # ==========================================
@@ -99,7 +122,7 @@ variable "db_username" {
   description = "RDS 마스터 사용자 이름"
   type        = string
   default     = "ticket"
-  sensitive   = true  # 로그에 출력되지 않음
+  sensitive   = true # 로그에 출력되지 않음
 }
 
 variable "db_password" {
@@ -116,7 +139,7 @@ variable "db_password" {
 variable "db_multi_az" {
   description = "RDS Multi-AZ 배포 여부"
   type        = bool
-  default     = false  # 비용 절감을 위해 Single AZ
+  default     = false # 비용 절감을 위해 Single AZ
 }
 
 # ==========================================
