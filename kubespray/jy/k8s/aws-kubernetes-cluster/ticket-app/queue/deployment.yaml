@@ -16,15 +16,17 @@ spec:
         app: ticketing-system-queue
     spec:
       containers:
-      - image: 968190279976.dkr.ecr.ap-northeast-2.amazonaws.com/ddcn41/msa/queue 
-        name: main
+      - image: 911723818289.dkr.ecr.ap-northeast-2.amazonaws.com/ddcn41/pjy/queue:latest
+        name: queue
         envFrom:
         - configMapRef:
-            name: queue-service-config
+            name: ticket-queue-config
         - secretRef:
-            name: backend-need-endpoint
+            name: db-secret
         - secretRef:
-            name: backend-need-key
+            name: redis-secret
+        - secretRef:
+            name: api-key-secret
         resources:
           limits: 
             memory: 512Mi

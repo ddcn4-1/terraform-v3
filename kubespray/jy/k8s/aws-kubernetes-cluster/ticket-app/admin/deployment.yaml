@@ -16,15 +16,17 @@ spec:
         app: ticketing-system-admin
     spec:
       containers:
-      - image: 968190279976.dkr.ecr.ap-northeast-2.amazonaws.com/ddcn41/msa/admin 
+      - image: 911723818289.dkr.ecr.ap-northeast-2.amazonaws.com/ddcn41/pjy/admin:latest
         name: admin
         envFrom:
         - configMapRef:
-            name: admin-service-config
+            name: ticket-admin-config
         - secretRef:
-            name: backend-need-endpoint
+            name: db-secret
         - secretRef:
-            name: backend-need-key
+            name: redis-secret
+        - secretRef:
+            name: api-key-secret
         resources:
           limits:
             memory: 512Mi
