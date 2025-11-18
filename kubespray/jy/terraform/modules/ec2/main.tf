@@ -92,7 +92,7 @@ resource "terraform_data" "wait_for_nat_init" {
     connection {
       type        = "ssh"
       user        = "ec2-user"
-      private_key = file("~/.ssh/ticket-keypair.pem")
+      private_key = file("~/.ssh/${var.key_pair_name}.pem")
       host        = aws_eip.nat_instance.public_ip
     }
   }
