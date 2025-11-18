@@ -1,0 +1,424 @@
+# EKS Production overrides
+# This file contains production-ready configuration for AWS EKS deployment
+#
+# Terraform Outputs Applied:
+# - AWS Account ID: 911723818289
+# - AWS Region: ap-northeast-2
+# - EKS Cluster: hs-eks-cluster
+# - ECR Core Service: 911723818289.dkr.ecr.ap-northeast-2.amazonaws.com/hs-eks-core-service
+# - ECR Queue Service: 911723818289.dkr.ecr.ap-northeast-2.amazonaws.com/hs-eks-queue-service
+
+global:
+  clusterDomain: cluster.local
+  imagePullSecrets: []
+  commonLabels:
+    environment: production
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  waitFor:
+    image: busybox:1.36
+    imagePullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 50m
+        memory: 32Mi
+      limits:
+        cpu: 200m
+        memory: 64Mi
+
+namespaces:
+  app:
+    create: false  # Namespace will be created by Helm --create-namespace flag
+    name: mini-msa-app
+    labels:
+      environment: production
+    annotations: {}
+  data:
+    create: false  # Using external RDS/ElastiCache instead of in-cluster databases
+    name: mini-msa-data
+    labels:
+      environment: production
+    annotations: {}
+
+secrets:
+  postgres:
+    create: false  # Using external RDS - connection info in rds-connection Secret
+    name: rds-connection
+    targetNamespaces:
+      - app
+    data: {}
+  redis:
+    create: false  # Using external ElastiCache - connection info in redis-connection Secret
+    name: redis-connection
+    targetNamespaces:
+      - app
+    data: {}
+
+# Unified Ingress Configuration (AWS Load Balancer Controller)
+# Single ALB for both core-service and queue-service with path-based routing
+ingress:
+  unified:
+    enabled: true
+    className: alb
+    albScheme: internet-facing
+    targetType: ip
+    loadBalancerName: mini-msa-unified-alb
+
+    # Subnets configuration
+    subnets: subnet-0e03b30226ffd8391,subnet-0a367ea1977a42eb2  # Public subnets for internet-facing ALB
+
+    # Security groups (optional - ALB controller will create one if not specified)
+    # securityGroups: sg-xxxxxxxxx
+
+    # Health check configuration
+    healthcheck:
+      intervalSeconds: 15
+      timeoutSeconds: 5
+      healthyThreshold: 2
+      unhealthyThreshold: 2
+
+    # Target group attributes
+    targetGroupAttributes: "deregistration_delay.timeout_seconds=30,stickiness.enabled=true,stickiness.lb_cookie.duration_seconds=86400"
+
+    # SSL/TLS configuration
+    ssl:
+      enabled: false  # Set to true and provide certificateArn for HTTPS
+      redirect: "443"
+      # certificateArn: arn:aws:acm:ap-northeast-2:911723818289:certificate/xxxxx
+
+    # Additional tags for ALB
+    tags: "Environment=production,Team=platform,ManagedBy=helm"
+
+    # Expose individual service health/metrics endpoints
+    exposeServiceEndpoints: false  # Set to true to expose /queue/health and /queue/metrics
+
+    # Hosts configuration
+    hosts:
+      - host: ""  # Leave empty for default or set your domain (e.g., api.example.com)
+
+    # Additional annotations
+    annotations: {}
+
+    # TLS configuration (optional)
+    tls: []
+    # - secretName: mini-msa-tls
+    #   hosts:
+    #     - api.example.com
+
+# Core Service Configuration
+coreService:
+  enabled: true
+  replicaCount: 2
+  image:
+    # ECR repository URL from Terraform output (ecr_core_service_url)
+    repository: "911723818289.dkr.ecr.ap-northeast-2.amazonaws.com/hs-eks-core-service"
+    tag: "latest"
+    pullPolicy: Always
+  configMap:
+    create: true  # Using ConfigMap for service-specific env vars (PORT, SERVICE_NAME, etc.)
+    name: "mini-msa-core-service-config"  # Service-specific ConfigMap name
+  service:
+    type: ClusterIP
+    port: 3002
+  ingress:
+    enabled: false  # Disabled - using unified ingress instead
+    className: "nginx"
+    annotations: {}
+    hosts:
+      - host: "" # Set your domain here
+        paths:
+          - path: /
+            pathType: Prefix
+  additionalIngresses:
+    alb:
+      enabled: false  # Disabled - using unified ingress instead
+      className: alb
+      annotations:
+        alb.ingress.kubernetes.io/scheme: internet-facing
+        alb.ingress.kubernetes.io/target-type: ip
+        alb.ingress.kubernetes.io/subnets: subnet-0e03b30226ffd8391,subnet-0a367ea1977a42eb2  # Explicit public subnets for internet-facing ALB
+        alb.ingress.kubernetes.io/healthcheck-path: /health
+        alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+        alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "5"
+        alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+        alb.ingress.kubernetes.io/unhealthy-threshold-count: "2"
+      hosts:
+        - host: ""
+          paths:
+            - path: /
+              pathType: Prefix
+  config:
+    nodeEnv: production
+  initContainers:
+    waitForQueue: false  # Disabled - no queue dependency checks needed
+  extraEnvFrom:
+    - secretRef:
+        name: rds-connection
+    - secretRef:
+        name: redis-connection
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+# Queue Service Configuration
+queueService:
+  enabled: true
+  replicaCount: 2
+  image:
+    # ECR repository URL from Terraform output (ecr_queue_service_url)
+    repository: "911723818289.dkr.ecr.ap-northeast-2.amazonaws.com/hs-eks-queue-service"
+    tag: "latest"
+    pullPolicy: Always
+  configMap:
+    create: true  # Using ConfigMap for service-specific env vars (PORT, SERVICE_NAME, etc.)
+    name: "mini-msa-queue-service-config"  # Service-specific ConfigMap name
+  service:
+    type: ClusterIP
+    port: 3001
+  config:
+    nodeEnv: production
+  initContainers:
+    waitForPostgres: false  # Disabled - using external RDS
+    waitForRedis: false     # Disabled - using external ElastiCache
+  extraEnvFrom:
+    - secretRef:
+        name: rds-connection
+    - secretRef:
+        name: redis-connection
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+# PostgreSQL Configuration
+# Note: Using external AWS RDS instead of in-cluster PostgreSQL
+# Terraform outputs: rds_security_group_id (sg-081f98c590b0b30c1)
+postgres:
+  enabled: false  # Disabled - using external RDS
+  persistence:
+    enabled: false
+    size: 10Gi
+    storageClass: "gp2"
+
+# Redis Configuration
+# Note: Using external AWS ElastiCache instead of in-cluster Redis
+# Terraform outputs: redis_security_group_id (sg-0c7792a3227169e27)
+redis:
+  enabled: false  # Disabled - using external ElastiCache
+  persistence:
+    enabled: false
+    size: 5Gi
+    storageClass: "gp2"
+
+# Monitoring Configuration
+# Note: Disabled for initial deployment to reduce resource usage
+# Enable after cluster is stable and has sufficient resources
+monitoring:
+  prometheus:
+    enabled: false  # Disabled for initial deployment - enable after cluster stabilizes
+    kube-prometheus-stack:
+      prometheus:
+        prometheusSpec:
+          retention: 30d
+          storageSpec:
+            volumeClaimTemplate:
+              spec:
+                storageClassName: gp2  # Changed from gp3
+                resources:
+                  requests:
+                    storage: 50Gi
+          resources:
+            requests:
+              cpu: 200m  # Reduced from 500m for resource efficiency
+              memory: 512Mi  # Reduced from 2Gi
+            limits:
+              cpu: 500m  # Reduced from 1000m
+              memory: 1Gi  # Reduced from 4Gi
+      grafana:
+        enabled: true
+        adminPassword: "" # Set a strong password or use AWS Secrets Manager
+        persistence:
+          enabled: true
+          storageClassName: gp2  # Changed from gp3
+          size: 10Gi
+        ingress:
+          enabled: true
+          ingressClassName: alb
+          annotations:
+            alb.ingress.kubernetes.io/scheme: internet-facing
+            alb.ingress.kubernetes.io/target-type: ip
+          hosts:
+            - "" # Set your Grafana domain here
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+  # Kubernetes Dashboard
+  dashboard:
+    enabled: false  # Disabled per user request
+    kubernetes-dashboard:
+      service:
+        type: ClusterIP
+      ingress:
+        enabled: true
+        className: alb
+        annotations:
+          alb.ingress.kubernetes.io/scheme: internal
+          alb.ingress.kubernetes.io/target-type: ip
+        hosts:
+          - "" # Set your dashboard domain here
+
+  # Kubeview
+  kubeview:
+    enabled: false  # Disabled per user request
+    ingress:
+      enabled: true
+      className: alb
+      annotations:
+        alb.ingress.kubernetes.io/scheme: internal
+        alb.ingress.kubernetes.io/target-type: ip
+      hosts:
+        - host: "" # Set your Kubeview domain here
+          paths:
+            - path: /
+              pathType: Prefix
+
+# Logging Configuration (ELK Stack)
+# Note: Disabled for initial deployment to reduce resource usage
+# Enable after cluster is stable and has sufficient resources
+logging:
+  eck:
+    operator:
+      enabled: false  # Disable ECK operator for initial deployment
+      resources:
+        limits:
+          cpu: 200m
+          memory: 256Mi
+        requests:
+          cpu: 100m
+          memory: 128Mi
+
+  elasticsearch:
+    enabled: false  # Disable Elasticsearch for initial deployment
+    version: "8.11.0"
+    nodeSets:
+      - name: default
+        count: 3 # Production cluster with 3 nodes
+        config:
+          node.store.allow_mmap: false
+        volumeClaimTemplates:
+          - metadata:
+              name: elasticsearch-data
+            spec:
+              accessModes:
+                - ReadWriteOnce
+              storageClassName: "gp3"
+              resources:
+                requests:
+                  storage: 100Gi
+        podTemplate:
+          spec:
+            containers:
+              - name: elasticsearch
+                resources:
+                  requests:
+                    memory: 4Gi
+                    cpu: 1000m
+                  limits:
+                    memory: 8Gi
+                    cpu: 2000m
+                env:
+                  - name: ES_JAVA_OPTS
+                    value: "-Xms2g -Xmx2g"
+
+  kibana:
+    enabled: false  # Disable Kibana for initial deployment
+    version: "8.11.0"
+    count: 2
+    http:
+      service:
+        spec:
+          type: ClusterIP
+      tls:
+        selfSignedCertificate:
+          disabled: false
+    podTemplate:
+      spec:
+        containers:
+          - name: kibana
+            resources:
+              requests:
+                memory: 1Gi
+                cpu: 500m
+              limits:
+                memory: 2Gi
+                cpu: 1000m
+
+  filebeat:
+    enabled: false  # Disable Filebeat for initial deployment
+    version: "8.11.0"
+    daemonSet:
+      podTemplate:
+        spec:
+          serviceAccountName: filebeat
+          automountServiceAccountToken: true
+          dnsPolicy: ClusterFirstWithHostNet
+          hostNetwork: true
+          securityContext:
+            runAsUser: 0
+          containers:
+            - name: filebeat
+              securityContext:
+                runAsUser: 0
+                privileged: true
+              resources:
+                requests:
+                  memory: 256Mi
+                  cpu: 200m
+                limits:
+                  memory: 512Mi
+                  cpu: 400m
+              volumeMounts:
+                - name: varlogcontainers
+                  mountPath: /var/log/containers
+                  readOnly: true
+                - name: varlogpods
+                  mountPath: /var/log/pods
+                  readOnly: true
+                - name: varlibdockercontainers
+                  mountPath: /var/lib/docker/containers
+                  readOnly: true
+          volumes:
+            - name: varlogcontainers
+              hostPath:
+                path: /var/log/containers
+            - name: varlogpods
+              hostPath:
+                path: /var/log/pods
+            - name: varlibdockercontainers
+              hostPath:
+                path: /var/lib/docker/containers

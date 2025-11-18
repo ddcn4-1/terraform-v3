@@ -351,7 +351,7 @@ metadata:
   namespace: {{ $appNs }}
   labels:
     {{- include "mini-msa.componentLabels" (dict "root" $root "component" (printf "core-%s" $name)) | nindent 4 }}
-    {{- with .Values.global.commonLabels }}
+    {{- with $root.Values.global.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
   {{- with $ing.annotations }}

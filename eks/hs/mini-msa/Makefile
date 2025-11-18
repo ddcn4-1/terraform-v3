@@ -1,6 +1,7 @@
 .PHONY: help build up down restart logs test clean ps health
 .PHONY: k8s-setup k8s-deploy k8s-test k8s-logs k8s-status k8s-clean k8s-clean-force k8s-clean-all k8s-port-forward k8s-restart
 .PHONY: lint lint-yaml lint-k8s lint-docker lint-shell
+.PHONY: ecr-login ecr-push ecr-push-core ecr-push-queue eks-deploy eks-update eks-kubeconfig eks-status eks-uninstall eks-test eks-test-verbose
 
 # Default target
 help:
@@ -17,6 +18,21 @@ help:
 	@echo "  make health     - Check health of all services"
 	@echo "  make ps         - List running containers"
 	@echo "  make clean      - Remove all containers, images, and volumes"
+	@echo ""
+	@echo "ECR Commands:"
+	@echo "  make ecr-login       - Login to AWS ECR"
+	@echo "  make ecr-push        - Build and push all images to ECR"
+	@echo "  make ecr-push-core   - Build and push core-service to ECR"
+	@echo "  make ecr-push-queue  - Build and push queue-service to ECR"
+	@echo ""
+	@echo "EKS Deployment Commands:"
+	@echo "  make eks-kubeconfig     - Configure kubectl for EKS cluster"
+	@echo "  make eks-deploy         - Deploy/upgrade application to EKS using Helm"
+	@echo "  make eks-update         - Update running application with new images"
+	@echo "  make eks-status         - Check EKS deployment status"
+	@echo "  make eks-test           - Run EKS integration tests via ALB"
+	@echo "  make eks-test-verbose   - Run EKS tests with verbose output"
+	@echo "  make eks-uninstall      - Uninstall application from EKS"
 	@echo ""
 	@echo "Kubernetes Commands:"
 	@echo "  make k8s-setup         - Setup and deploy to local Kubernetes cluster"
@@ -431,6 +447,12 @@ helm-test:
 	@chmod +x scripts/helm-test.sh
 	@APP_NAMESPACE=$(APP_NAMESPACE) DATA_NAMESPACE=$(DATA_NAMESPACE) HELM_RELEASE=$(HELM_RELEASE) ./scripts/helm-test.sh
 
+# Test via ALB (internet-facing)
+alb-test:
+	@echo "Running ALB API tests..."
+	@chmod +x scripts/alb-test.sh
+	@APP_NAMESPACE=$(APP_NAMESPACE) ./scripts/alb-test.sh
+
 # Rollback Helm release
 helm-rollback:
 	@echo "Rolling back Helm release..."
@@ -552,3 +574,167 @@ elk-health:
 	@echo ""
 	@echo "Elasticsearch health:"
 	@kubectl exec -n $(APP_NAMESPACE) $(HELM_RELEASE)-elasticsearch-es-default-0 -- curl -k -u elastic:$$(kubectl get secret $(HELM_RELEASE)-elasticsearch-es-elastic-user -n $(APP_NAMESPACE) -o go-template='{{.data.elastic | base64decode}}') https://localhost:9200/_cluster/health?pretty 2>/dev/null || echo "Failed to connect"
+
+# =============================================================================
+# ECR Commands
+# =============================================================================
+TERRAFORM_DIR ?= ../terraform/core-infra
+AWS_REGION ?= ap-northeast-2
+IMAGE_TAG ?= latest
+ECR_CORE_URL := $(shell cd $(TERRAFORM_DIR) && terraform output -raw ecr_core_service_url 2>/dev/null || echo "")
+ECR_QUEUE_URL := $(shell cd $(TERRAFORM_DIR) && terraform output -raw ecr_queue_service_url 2>/dev/null || echo "")
+AWS_ACCOUNT_ID := $(shell cd $(TERRAFORM_DIR) && terraform output -raw aws_account_id 2>/dev/null || echo "")
+
+# Login to ECR
+ecr-login:
+	@echo "Logging in to ECR..."
+	@if [ -z "$(AWS_ACCOUNT_ID)" ]; then \
+		echo "Error: Cannot get AWS Account ID from Terraform outputs"; \
+		exit 1; \
+	fi
+	aws ecr get-login-password --region $(AWS_REGION) | \
+		docker login --username AWS --password-stdin $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
+	@echo "✓ Logged in to ECR successfully"
+
+# Build and push all images to ECR
+ecr-push: ecr-login
+	@echo "Building and pushing all images to ECR..."
+	@if [ -z "$(ECR_CORE_URL)" ] || [ -z "$(ECR_QUEUE_URL)" ]; then \
+		echo "Error: Cannot get ECR URLs from Terraform outputs"; \
+		echo "Make sure Terraform has been applied in $(TERRAFORM_DIR)"; \
+		exit 1; \
+	fi
+	@$(MAKE) ecr-push-core
+	@$(MAKE) ecr-push-queue
+	@echo ""
+	@echo "✓ All images pushed to ECR successfully!"
+	@echo ""
+	@echo "Images:"
+	@echo "  $(ECR_CORE_URL):$(IMAGE_TAG)"
+	@echo "  $(ECR_QUEUE_URL):$(IMAGE_TAG)"
+
+# Build and push core-service to ECR
+ecr-push-core:
+	@echo "Building and pushing core-service..."
+	@if [ -z "$(ECR_CORE_URL)" ]; then \
+		echo "Error: ECR_CORE_URL not set"; \
+		exit 1; \
+	fi
+	docker build -t core-service:$(IMAGE_TAG) ./core-service
+	docker tag core-service:$(IMAGE_TAG) $(ECR_CORE_URL):$(IMAGE_TAG)
+	docker push $(ECR_CORE_URL):$(IMAGE_TAG)
+	@echo "✓ core-service pushed to $(ECR_CORE_URL):$(IMAGE_TAG)"
+
+# Build and push queue-service to ECR
+ecr-push-queue:
+	@echo "Building and pushing queue-service..."
+	@if [ -z "$(ECR_QUEUE_URL)" ]; then \
+		echo "Error: ECR_QUEUE_URL not set"; \
+		exit 1; \
+	fi
+	docker build -t queue-service:$(IMAGE_TAG) ./queue-service
+	docker tag queue-service:$(IMAGE_TAG) $(ECR_QUEUE_URL):$(IMAGE_TAG)
+	docker push $(ECR_QUEUE_URL):$(IMAGE_TAG)
+	@echo "✓ queue-service pushed to $(ECR_QUEUE_URL):$(IMAGE_TAG)"
+
+# =============================================================================
+# EKS Deployment Commands
+# =============================================================================
+EKS_NAMESPACE ?= mini-msa-app
+EKS_RELEASE ?= mini-msa
+EKS_VALUES_FILE ?= helm/mini-msa/values-eks.yaml
+EKS_CLUSTER_NAME := $(shell cd $(TERRAFORM_DIR) && terraform output -raw eks_cluster_name 2>/dev/null || echo "")
+
+# Configure kubectl for EKS cluster
+eks-kubeconfig:
+	@echo "Configuring kubectl for EKS cluster..."
+	@if [ -z "$(EKS_CLUSTER_NAME)" ]; then \
+		echo "Error: Cannot get EKS cluster name from Terraform outputs"; \
+		exit 1; \
+	fi
+	aws eks update-kubeconfig --region $(AWS_REGION) --name $(EKS_CLUSTER_NAME)
+	@echo "✓ kubectl configured for cluster: $(EKS_CLUSTER_NAME)"
+	@echo ""
+	@kubectl cluster-info
+
+# Deploy/upgrade application to EKS using Helm
+eks-deploy: eks-kubeconfig
+	@echo "Deploying to EKS cluster..."
+	@if [ ! -f "$(EKS_VALUES_FILE)" ]; then \
+		echo "Error: Values file not found: $(EKS_VALUES_FILE)"; \
+		exit 1; \
+	fi
+	@echo "Updating Helm dependencies..."
+	cd helm/mini-msa && helm dependency update
+	@echo "Installing/Upgrading Helm release..."
+	helm upgrade --install $(EKS_RELEASE) helm/mini-msa \
+		-f $(EKS_VALUES_FILE) \
+		--namespace $(EKS_NAMESPACE) \
+		--create-namespace \
+		--atomic \
+		--wait \
+		--timeout 10m
+	@echo ""
+	@echo "✓ Deployment complete!"
+	@echo ""
+	@$(MAKE) eks-status
+
+# Update running application with new images (build, push, deploy)
+eks-update: ecr-push
+	@echo "Updating EKS deployment with new images..."
+	helm upgrade $(EKS_RELEASE) helm/mini-msa \
+		-f $(EKS_VALUES_FILE) \
+		--namespace $(EKS_NAMESPACE) \
+		--set coreService.image.tag=$(IMAGE_TAG) \
+		--set queueService.image.tag=$(IMAGE_TAG) \
+		--atomic \
+		--wait \
+		--timeout 10m
+	@echo ""
+	@echo "✓ Update complete!"
+	@$(MAKE) eks-status
+
+# Check EKS deployment status
+eks-status:
+	@echo "EKS Deployment Status"
+	@echo "===================="
+	@echo ""
+	@echo "Helm Release:"
+	@helm status $(EKS_RELEASE) -n $(EKS_NAMESPACE) || echo "Release not found"
+	@echo ""
+	@echo "Pods:"
+	@kubectl get pods -n $(EKS_NAMESPACE) -o wide
+	@echo ""
+	@echo "Services:"
+	@kubectl get svc -n $(EKS_NAMESPACE)
+	@echo ""
+	@echo "Ingress:"
+	@kubectl get ingress -n $(EKS_NAMESPACE)
+
+# Run EKS integration tests via ALB
+eks-test:
+	@echo "Running EKS integration tests..."
+	@chmod +x scripts/eks-test.sh
+	@APP_NAMESPACE=$(EKS_NAMESPACE) ./scripts/eks-test.sh
+
+# Run EKS integration tests with verbose output
+eks-test-verbose:
+	@echo "Running EKS integration tests (verbose mode)..."
+	@chmod +x scripts/eks-test.sh
+	@APP_NAMESPACE=$(EKS_NAMESPACE) ./scripts/eks-test.sh --verbose
+
+# Uninstall application from EKS
+eks-uninstall:
+	@echo "Uninstalling application from EKS..."
+	helm uninstall $(EKS_RELEASE) -n $(EKS_NAMESPACE) || true
+	@echo "Waiting for resources to be deleted..."
+	@sleep 5
+	@echo "Do you want to delete the namespace? [y/N]"
+	@read -p "> " confirm; \
+	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+		kubectl delete namespace $(EKS_NAMESPACE) || true; \
+		echo "✓ Namespace deleted"; \
+	else \
+		echo "Namespace preserved"; \
+	fi
+	@echo "✓ Uninstall complete"
