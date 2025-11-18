@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: queue-api
+    namespace: queue
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            app: queue-api
+    template:
+        metadata:
+            labels:
+                app: queue-api
+        spec:
+            containers:
+                - name: queue-api
+                  image: k3d-local-registry:5001/ticketing-queue:latest # 개인의 환경에 맞게 설정
+                  imagePullPolicy: Always
+                  ports:
+                      - containerPort: 8083
+                  env:
+                      - name: SPRING_PROFILES_ACTIVE
+                        value: 'local'
+
+                      # DB
+                      - name: DB_URL
+                        valueFrom:
+                            secretKeyRef:
+                                name: ticketing-db-redis
+                                key: DB_URL
+                      - name: DB_USERNAME
+                        valueFrom:
+                            secretKeyRef:
+                                name: ticketing-db-redis
+                                key: DB_USERNAME
+                      - name: DB_PASSWORD
+                        valueFrom:
+                            secretKeyRef:
+                                name: ticketing-db-redis
+                                key: DB_PASSWORD
+
+                      # Redis
+                      - name: REDIS_HOST
+                        valueFrom:
+                            secretKeyRef:
+                                name: ticketing-db-redis
+                                key: REDIS_HOST
+                      - name: REDIS_PORT
+                        valueFrom:
+                            secretKeyRef:
+                                name: ticketing-db-redis
+                                key: REDIS_PORT
+
+                      # JWT / Cognito
+                      - name: COGNITO_USER_POOL_ID
+                        valueFrom:
+                            configMapKeyRef:
+                                name: ticketing-auth-config
+                                key: COGNITO_USER_POOL_ID
+                      - name: COGNITO_CLIENT_ID
+                        valueFrom:
+                            configMapKeyRef:
+                                name: ticketing-auth-config
+                                key: COGNITO_CLIENT_ID
+                      - name: COGNITO_REGION
+                        valueFrom:
+                            configMapKeyRef:
+                                name: ticketing-auth-config
+                                key: COGNITO_REGION

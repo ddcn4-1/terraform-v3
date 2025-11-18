@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: core-api
+    namespace: core
+spec:
+    replicas: 2
+    selector:
+        matchLabels:
+            app: core-api
+    template:
+        metadata:
+            labels:
+                app: core-api
+        spec:
+            containers:
+                - name: core-api
+                  image: k3d-local-registry:5001/ticketing-api:latest # 개인의 환경에 맞게 설정 (Docker build/push 기준)
+                  imagePullPolicy: Always
+                  ports:
+                      - containerPort: 8082
+                  env:
+                      # --- Spring Profile ---
+                      - name: SPRING_PROFILES_ACTIVE
+                        value: 'local'
+
+                      # --- DB ---
+                      - name: DB_URL
+                        valueFrom:
+                            secretKeyRef:
+                                name: ticketing-db-redis
+                                key: DB_URL
+                      - name: DB_USERNAME
+                        valueFrom:
+                            secretKeyRef:
+                                name: ticketing-db-redis
+                                key: DB_USERNAME
+                      - name: DB_PASSWORD
+                        valueFrom:
+                            secretKeyRef:
+                                name: ticketing-db-redis
+                                key: DB_PASSWORD
+
+                      # --- Redis (spring.data.redis + jwt.blacklist.redis) ---
+                      - name: REDIS_HOST
+                        valueFrom:
+                            secretKeyRef:
+                                name: ticketing-db-redis
+                                key: REDIS_HOST
+                      - name: REDIS_PORT
+                        valueFrom:
+                            secretKeyRef:
+                                name: ticketing-db-redis
+                                key: REDIS_PORT
+
+                      # --- Cognito & JWT (application.yml 의 jwt.* / auth.* 참조) ---
+                      - name: COGNITO_USER_POOL_ID
+                        valueFrom:
+                            configMapKeyRef:
+                                name: ticketing-auth-config
+                                key: COGNITO_USER_POOL_ID
+                      - name: COGNITO_CLIENT_ID
+                        valueFrom:
+                            configMapKeyRef:
+                                name: ticketing-auth-config
+                                key: COGNITO_CLIENT_ID
+                      - name: COGNITO_REGION
+                        valueFrom:
+                            configMapKeyRef:
+                                name: ticketing-auth-config
+                                key: COGNITO_REGION
+
+                      # --- AWS / S3 (spring.cloud.aws.*) ---
+                      - name: AWS_REGION
+                        valueFrom:
+                            configMapKeyRef:
+                                name: ticketing-auth-config
+                                key: AWS_REGION
+                      - name: S3_BUCKET
+                        valueFrom:
+                            configMapKeyRef:
+                                name: ticketing-auth-config
+                                key: S3_BUCKET
+
+                  # liveness/readiness probe는 actuator 열어두면 추가 가능

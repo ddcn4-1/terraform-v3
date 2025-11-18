@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+    name: frontend-accounts-ingress
+    namespace: core
+spec:
+    ingressClassName: nginx
+    tls:
+        - hosts:
+              - local.accounts.ddcn41.com
+          secretName: ddcn41-tls
+    rules:
+        - host: local.accounts.ddcn41.com
+          http:
+              paths:
+                  - path: /
+                    pathType: Prefix
+                    backend:
+                        service:
+                            name: frontend-accounts
+                            port:
+                                number: 3002

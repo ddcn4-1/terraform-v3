@@ -34,6 +34,8 @@ terraform.rc
 kubespray/*
 !kubespray/hj/
 !kubespray/jy/
+kubespray/hj/env-local/k8s/core/config 
+kubespray/hj/env-local/k8s/queue/config
 inventory/backup/
 *.retry
 

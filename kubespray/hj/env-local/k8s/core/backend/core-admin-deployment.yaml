@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: admin-api
+    namespace: core
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            app: admin-api
+    template:
+        metadata:
+            labels:
+                app: admin-api
+        spec:
+            containers:
+                - name: admin-api
+                  image: k3d-local-registry:5001/ticketing-admin:latest # 개인의 환경에 맞게 설정
+                  imagePullPolicy: Always
+                  ports:
+                      - containerPort: 8081
+                  env:
+                      - name: SPRING_PROFILES_ACTIVE
+                        value: 'local'
+
+                      # Redis for jwt.blacklist, spring.data.redis
+                      - name: REDIS_HOST
+                        valueFrom:
+                            secretKeyRef:
+                                name: ticketing-db-redis
+                                key: REDIS_HOST
+                      - name: REDIS_PORT
+                        valueFrom:
+                            secretKeyRef:
+                                name: ticketing-db-redis
+                                key: REDIS_PORT
+
+                      # Cognito / JWT
+                      - name: COGNITO_USER_POOL_ID
+                        valueFrom:
+                            configMapKeyRef:
+                                name: ticketing-auth-config
+                                key: COGNITO_USER_POOL_ID
+                      - name: COGNITO_CLIENT_ID
+                        valueFrom:
+                            configMapKeyRef:
+                                name: ticketing-auth-config
+                                key: COGNITO_CLIENT_ID
+                      - name: COGNITO_REGION
+                        valueFrom:
+                            configMapKeyRef:
+                                name: ticketing-auth-config
+                                key: COGNITO_REGION

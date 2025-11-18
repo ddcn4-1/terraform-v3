@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: frontend-client
+    namespace: core
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            app: frontend-client
+    template:
+        metadata:
+            labels:
+                app: frontend-client
+        spec:
+            containers:
+                - name: frontend-client
+                  image: k3d-local-registry:5001/ticketing-client:latest
+                  imagePullPolicy: Always
+                  ports:
+                      - containerPort: 3000
+                      - containerPort: 3001
+                      - containerPort: 3002
