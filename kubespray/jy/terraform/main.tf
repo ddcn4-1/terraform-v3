@@ -7,8 +7,9 @@
 module "vpc" {
   source = "./modules/vpc"
 
+  name_prefix = "${local.owner}-${local.project_name}-${local.environment}"
+
   # VPC 기본 설정
-  vpc_name    = local.project_name
   vpc_cidr    = local.vpc_cidr
   environment = local.environment
 

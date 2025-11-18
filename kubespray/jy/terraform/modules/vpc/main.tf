@@ -16,7 +16,7 @@ resource "aws_vpc" "main" {
   tags = merge(
     local.common_tags,
     {
-      Name                                   = "${local.name_prefix}-vpc"
+      Name                                   = "${var.name_prefix}-vpc"
       "kubernetes.io/cluster/kubernetes-pjy" = "shared"
     }
   )
@@ -32,7 +32,7 @@ resource "aws_internet_gateway" "main" {
   tags = merge(
     local.common_tags,
     {
-      Name = "${local.name_prefix}-igw"
+      Name = "${var.name_prefix}-igw"
     }
   )
 }
@@ -55,7 +55,7 @@ resource "aws_subnet" "public" {
   tags = merge(
     local.common_tags,
     {
-      Name = "${local.name_prefix}-public-${each.key}"
+      Name = "${var.name_prefix}-public-${each.key}"
       Tier = "Public"
       AZ   = each.key
 
@@ -83,7 +83,7 @@ resource "aws_subnet" "private" {
   tags = merge(
     local.common_tags,
     {
-      Name = "${local.name_prefix}-private-${each.key}"
+      Name = "${var.name_prefix}-private-${each.key}"
       Tier = "Private"
       AZ   = each.key
 
@@ -107,7 +107,7 @@ resource "aws_eip" "nat" {
   tags = merge(
     local.common_tags,
     {
-      Name = "${local.name_prefix}-nat-eip"
+      Name = "${var.name_prefix}-nat-eip"
     }
   )
 
@@ -129,7 +129,7 @@ resource "aws_nat_gateway" "main" {
   tags = merge(
     local.common_tags,
     {
-      Name = "${local.name_prefix}-nat-gateway"
+      Name = "${var.name_prefix}-nat-gateway"
     }
   )
 
@@ -147,7 +147,7 @@ resource "aws_route_table" "public" {
   tags = merge(
     local.common_tags,
     {
-      Name = "${local.name_prefix}-public-rt"
+      Name = "${var.name_prefix}-public-rt"
       Tier = "Public"
     }
   )
@@ -181,7 +181,7 @@ resource "aws_route_table" "private" {
   tags = merge(
     local.common_tags,
     {
-      Name = "${local.name_prefix}-private-rt-${each.key}"
+      Name = "${var.name_prefix}-private-rt-${each.key}"
       Tier = "Private"
       AZ   = each.key
     }

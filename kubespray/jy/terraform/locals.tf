@@ -5,7 +5,7 @@
 locals {
   # 프로젝트 식별자
   project_name = "ticket"
-  owner        = "PJY"
+  owner        = "pjy"
 
   # 환경 설정 (변수에서 가져옴)
   environment = var.environment

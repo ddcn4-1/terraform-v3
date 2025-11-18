@@ -5,15 +5,10 @@
 # VPC 기본 설정
 # ==========================================
 
-variable "vpc_name" {
-  description = "VPC 이름"
-  type        = string
-}
-
 variable "vpc_cidr" {
   description = "VPC CIDR 블록"
   type        = string
-  
+
   validation {
     condition     = can(cidrhost(var.vpc_cidr, 0))
     error_message = "올바른 CIDR 형식이어야 합니다. (예: 10.0.0.0/16)"
@@ -22,6 +17,11 @@ variable "vpc_cidr" {
 
 variable "environment" {
   description = "환경 (dev, staging, prod)"
+  type        = string
+}
+
+variable "name_prefix" {
+  description = "리소스 이름 접두사"
   type        = string
 }
 
