@@ -206,3 +206,42 @@ module "database" {
     module.security_groups
   ]
 }
+
+
+# ==========================================
+# Secrets Manager
+# ==========================================
+
+module "secrets" {
+  source = "./modules/secrets"
+
+  # 기본 설정
+  environment = local.environment
+  name_prefix = "${local.owner}-${local.project_name}-${local.environment}"
+
+  # Database Credentials
+  db_master_username = var.db_username
+  db_master_password = var.db_password
+  db_host            = module.database.rds_address
+  db_port            = module.database.rds_port
+  db_name            = var.db_name
+
+  # Redis Credentials
+  redis_host = module.database.redis_primary_endpoint
+  redis_port = module.database.redis_port
+
+  # Application Secrets
+  api_keys = var.api_keys
+
+  # Secrets 설정
+  recovery_window_in_days = var.environment == "prod" ? 30 : 7
+  enable_rotation         = false
+
+  # 태그
+  tags = local.common_tags
+
+  # 의존성
+  depends_on = [
+    module.database
+  ]
+}

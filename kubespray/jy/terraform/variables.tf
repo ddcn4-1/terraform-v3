@@ -152,6 +152,18 @@ variable "redis_num_cache_nodes" {
   default     = 1
 }
 
+
+# ==========================================
+# Application Secrets
+# ==========================================
+
+variable "api_keys" {
+  description = "외부 API 키 맵"
+  type        = map(string)
+  sensitive   = true
+  default     = {}
+}
+
 # ==========================================
 # S3 설정
 # ==========================================
