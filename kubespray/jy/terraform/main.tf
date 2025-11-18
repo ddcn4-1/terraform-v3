@@ -39,7 +39,7 @@ module "security_groups" {
 
   # 환경 설정
   environment = local.environment
-  name_prefix = "${local.project_name}-${local.environment}"
+  name_prefix = "${local.owner}-${local.project_name}-${local.environment}"
 
   # Private Subnet CIDR 리스트
   private_subnet_cidrs = values(local.private_subnet_cidrs)
@@ -68,7 +68,7 @@ module "iam" {
 
   # 기본 설정
   environment = local.environment
-  name_prefix = "${local.project_name}-${local.environment}"
+  name_prefix = "${local.owner}-${local.project_name}-${local.environment}"
 
   # # S3 버킷 (Frontend)
   # s3_bucket_names = values(var.s3_bucket_names)
@@ -106,7 +106,7 @@ module "ec2" {
 
   # 기본 설정
   environment = local.environment
-  name_prefix = "${local.project_name}-${local.environment}"
+  name_prefix = "${local.owner}-${local.project_name}-${local.environment}"
 
   # VPC 및 Subnet
   vpc_id                  = module.vpc.vpc_id
@@ -160,48 +160,48 @@ module "ec2" {
 # 데이터베이스 (RDS & ElastiCache)
 # ==========================================
 
-# module "database" {
-#   source = "./modules/database"
+module "database" {
+  source = "./modules/database"
 
-#   # 기본 설정
-#   environment = local.environment
-#   name_prefix = "${local.project_name}-${local.environment}"
+  # 기본 설정
+  environment = local.environment
+  name_prefix = "${local.owner}-${local.project_name}-${local.environment}"
 
-#   # 네트워크
-#   vpc_id             = module.vpc.vpc_id
-#   private_subnet_ids = module.vpc.private_subnet_ids
+  # 네트워크
+  vpc_id             = module.vpc.vpc_id
+  private_subnet_ids = module.vpc.private_subnet_ids
 
-#   # Security Groups
-#   rds_security_group_id         = module.security_groups.rds_security_group_id
-#   elasticache_security_group_id = module.security_groups.elasticache_security_group_id
+  # Security Groups
+  rds_security_group_id         = module.security_groups.rds_security_group_id
+  elasticache_security_group_id = module.security_groups.elasticache_security_group_id
 
-#   # RDS 설정
-#   rds_instance_class      = local.rds_config.instance_class
-#   rds_allocated_storage   = local.rds_config.allocated_storage
-#   rds_storage_type        = local.rds_config.storage_type
-#   rds_engine_version      = local.rds_config.engine_version
-#   db_name                 = var.db_name
-#   db_username             = var.db_username
-#   db_password             = var.db_password
-#   rds_multi_az            = var.db_multi_az
-#   rds_deletion_protection = var.environment == "prod" ? true : false
-#   rds_skip_final_snapshot = var.environment == "prod" ? false : true
+  # RDS 설정
+  rds_instance_class      = local.rds_config.instance_class
+  rds_allocated_storage   = local.rds_config.allocated_storage
+  rds_storage_type        = local.rds_config.storage_type
+  rds_engine_version      = local.rds_config.engine_version
+  db_name                 = var.db_name
+  db_username             = var.db_username
+  db_password             = var.db_password
+  rds_multi_az            = var.db_multi_az
+  rds_deletion_protection = var.environment == "prod" ? true : false
+  rds_skip_final_snapshot = var.environment == "prod" ? false : true
 
-#   # ElastiCache 설정
-#   redis_node_type       = local.elasticache_config.node_type
-#   redis_num_cache_nodes = var.redis_num_cache_nodes
-#   redis_engine_version  = "7.0"
+  # ElastiCache 설정
+  redis_node_type       = local.elasticache_config.node_type
+  redis_num_cache_nodes = var.redis_num_cache_nodes
+  redis_engine_version  = "7.0"
 
-#   # 모니터링
-#   enable_cloudwatch_alarms = true
-#   sns_topic_arn            = "" # SNS Topic 생성 후 추가
+  # 모니터링
+  # enable_cloudwatch_alarms = true
+  # sns_topic_arn            = "" # SNS Topic 생성 후 추가
 
-#   # 태그
-#   tags = local.common_tags
+  # 태그
+  tags = local.common_tags
 
-#   # 의존성
-#   depends_on = [
-#     module.vpc,
-#     module.security_groups
-#   ]
-# }
+  # 의존성
+  depends_on = [
+    module.vpc,
+    module.security_groups
+  ]
+}
