@@ -49,14 +49,6 @@ resource "aws_db_parameter_group" "postgres" {
   }
 }
 
-# Generate random password for RDS master user
-resource "random_password" "rds_master_password" {
-  length  = 32
-  special = true
-  # Exclude characters that might cause issues in connection strings
-  override_special = "!#$%&*()-_=+[]{}<>:?"
-}
-
 # Store RDS password in AWS Secrets Manager
 resource "aws_secretsmanager_secret" "rds_password" {
   name_prefix             = "${var.project_name}-rds-password-"
@@ -71,7 +63,7 @@ resource "aws_secretsmanager_secret" "rds_password" {
 
 resource "aws_secretsmanager_secret_version" "rds_password" {
   secret_id     = aws_secretsmanager_secret.rds_password.id
-  secret_string = random_password.rds_master_password.result
+  secret_string = var.rds_password
 }
 
 # RDS PostgreSQL Instance
@@ -90,7 +82,7 @@ resource "aws_db_instance" "postgres" {
   # Database configuration
   db_name  = var.rds_database_name
   username = var.rds_username
-  password = random_password.rds_master_password.result
+  password = var.rds_password
   port     = var.rds_port
 
   # Network configuration

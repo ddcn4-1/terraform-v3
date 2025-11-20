@@ -31,10 +31,13 @@ module "eks" {
   enable_irsa = true
 
   # Cluster add-ons (managed by EKS)
+  # Version fixed for faster deployment and consistency
+  # To update versions, run: aws eks describe-addon-versions --kubernetes-version 1.33 --addon-name <addon-name>
   cluster_addons = {
     # CoreDNS for DNS resolution
     coredns = {
-      most_recent = true
+      addon_version               = "v1.12.4-eksbuild.1"
+      resolve_conflicts_on_create = "OVERWRITE"
       configuration_values = jsonencode({
         tolerations = [
           {
@@ -47,7 +50,8 @@ module "eks" {
 
     # VPC CNI for pod networking
     vpc-cni = {
-      most_recent = true
+      addon_version               = "v1.20.4-eksbuild.1"
+      resolve_conflicts_on_create = "OVERWRITE"
       configuration_values = jsonencode({
         env = {
           # Enable prefix delegation for more IPs per node
@@ -60,18 +64,21 @@ module "eks" {
 
     # kube-proxy for service networking
     kube-proxy = {
-      most_recent = true
+      addon_version               = "v1.33.5-eksbuild.2"
+      resolve_conflicts_on_create = "OVERWRITE"
     }
 
     # EBS CSI Driver for persistent volumes
     aws-ebs-csi-driver = {
-      most_recent              = true
-      service_account_role_arn = module.ebs_csi_driver_irsa_role.iam_role_arn
+      addon_version               = "v1.53.0-eksbuild.1"
+      resolve_conflicts_on_create = "OVERWRITE"
+      service_account_role_arn    = module.ebs_csi_driver_irsa_role.iam_role_arn
     }
 
     # Pod Identity Agent (for IRSA)
     eks-pod-identity-agent = {
-      most_recent = true
+      addon_version               = "v1.3.9-eksbuild.5"
+      resolve_conflicts_on_create = "OVERWRITE"
     }
   }
 
@@ -91,11 +98,13 @@ module "eks" {
       capacity_type  = var.node_capacity_type
 
       # Disk configuration
+      # Cost-optimized: 20GB (AWS EKS minimum recommended)
+      # Warning: Monitor disk usage - may need to increase for heavy workloads
       block_device_mappings = {
         xvda = {
           device_name = "/dev/xvda"
           ebs = {
-            volume_size           = var.node_disk_size
+            volume_size           = 20 # Reduced for cost optimization (minimum safe size)
             volume_type           = "gp3"
             iops                  = 3000
             throughput            = 125
@@ -156,8 +165,8 @@ module "eks" {
 
       # Tags
       tags = {
-        Name            = "${var.project_name}-node-group"
-        NodeGroupType   = "managed"
+        Name                     = "${var.project_name}-node-group"
+        NodeGroupType            = "managed"
         "karpenter.sh/discovery" = "${var.project_name}-cluster"
       }
     }

@@ -37,13 +37,13 @@ module "vpc" {
 
   # Tags for EKS (required for AWS Load Balancer Controller)
   public_subnet_tags = {
-    "kubernetes.io/role/elb"                    = "1"
-    "kubernetes.io/cluster/${var.project_name}" = "shared"
+    "kubernetes.io/role/elb"                           = "1"
+    "kubernetes.io/cluster/${var.project_name}-cluster" = "shared"
   }
 
   private_subnet_tags = {
-    "kubernetes.io/role/internal-elb"           = "1"
-    "kubernetes.io/cluster/${var.project_name}" = "shared"
+    "kubernetes.io/role/internal-elb"                  = "1"
+    "kubernetes.io/cluster/${var.project_name}-cluster" = "shared"
   }
 
   database_subnet_tags = {

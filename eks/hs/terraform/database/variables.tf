@@ -51,13 +51,20 @@ variable "rds_allocated_storage" {
 variable "rds_database_name" {
   description = "Name of the initial database"
   type        = string
-  default     = "minimsa"
+  default     = "ticketdb"
 }
 
 variable "rds_username" {
   description = "Master username for RDS"
   type        = string
-  default     = "postgres"
+  default     = "ticket"
+  sensitive   = true
+}
+
+variable "rds_password" {
+  description = "Master password for RDS"
+  type        = string
+  default     = "ticketpass"
   sensitive   = true
 }
 
@@ -110,6 +117,21 @@ variable "redis_parameter_group_family" {
   description = "Redis parameter group family"
   type        = string
   default     = "redis7"
+}
+
+# Cognito Variables
+variable "cognito_user_pool_id" {
+  description = "Cognito User Pool ID"
+  type        = string
+  default     = "ap-northeast-2_U5OVPrFCS"
+  sensitive   = true
+}
+
+variable "cognito_client_id" {
+  description = "Cognito Client ID"
+  type        = string
+  default     = "3v51kgfg28ku4r5onf9lfijsfj"
+  sensitive   = true
 }
 
 # Tags

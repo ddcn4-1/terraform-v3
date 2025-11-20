@@ -79,6 +79,25 @@ output "redis_connection_string" {
   value       = "redis://${aws_elasticache_cluster.redis.cache_nodes[0].address}:${aws_elasticache_cluster.redis.cache_nodes[0].port}"
 }
 
+# Sensitive values for Lambda
+output "rds_password" {
+  description = "RDS master password"
+  value       = var.rds_password
+  sensitive   = true
+}
+
+output "redis_auth_token" {
+  description = "Redis auth token"
+  value       = random_password.redis_auth_token.result
+  sensitive   = true
+}
+
+output "jwt_secret" {
+  description = "JWT secret"
+  value       = random_password.jwt_secret.result
+  sensitive   = true
+}
+
 # Summary
 output "deployment_summary" {
   description = "Summary of deployed database resources"

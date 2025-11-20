@@ -126,24 +126,6 @@ output "aws_account_id" {
   value       = data.aws_caller_identity.current.account_id
 }
 
-# ECR Outputs
-output "ecr_repository_urls" {
-  description = "ECR repository URLs for services"
-  value = {
-    for k, v in aws_ecr_repository.mini_msa : k => v.repository_url
-  }
-}
-
-output "ecr_core_service_url" {
-  description = "ECR repository URL for core-service"
-  value       = aws_ecr_repository.mini_msa["core-service"].repository_url
-}
-
-output "ecr_queue_service_url" {
-  description = "ECR repository URL for queue-service"
-  value       = aws_ecr_repository.mini_msa["queue-service"].repository_url
-}
-
 # Remote State Access Info
 output "remote_state_config" {
   description = "Configuration for accessing this remote state from database module"

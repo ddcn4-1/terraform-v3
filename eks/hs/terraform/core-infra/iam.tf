@@ -71,11 +71,11 @@ module "ebs_csi_driver_irsa_role" {
 #   }
 # }
 
-# IAM Policy for Application Pods (example for accessing S3, RDS, etc.)
+# IAM Policy for Application Pods (accessing S3, Secrets Manager, KMS)
 # This is a custom policy that can be attached to application service accounts
 resource "aws_iam_policy" "application_policy" {
   name_prefix = "${var.project_name}-app-"
-  description = "IAM policy for mini-msa application pods"
+  description = "IAM policy for backend-v3 application pods"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -85,9 +85,12 @@ resource "aws_iam_policy" "application_policy" {
         Action = [
           "s3:GetObject",
           "s3:PutObject",
+          "s3:DeleteObject",
           "s3:ListBucket"
         ]
         Resource = [
+          "arn:aws:s3:::ddcn41v1-image",
+          "arn:aws:s3:::ddcn41v1-image/*",
           "arn:aws:s3:::${var.project_name}-*",
           "arn:aws:s3:::${var.project_name}-*/*"
         ]
@@ -137,8 +140,7 @@ module "application_irsa_role" {
     main = {
       provider_arn = module.eks.oidc_provider_arn
       namespace_service_accounts = [
-        "default:core-service",
-        "default:queue-service"
+        "default:backend-v3-sa"
       ]
     }
   }
