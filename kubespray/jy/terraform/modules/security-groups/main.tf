@@ -332,6 +332,39 @@ resource "aws_security_group_rule" "control_plane_ingress_controller" {
   security_group_id        = aws_security_group.control_plane.id
 }
 
+# Control Plane Inbound: calico bgp
+resource "aws_security_group_rule" "control_plane_ingress_calico_bgp" {
+  type                     = "ingress"
+  from_port                = local.calico_ports.bgp
+  to_port                  = local.calico_ports.bgp
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.worker_node.id
+  description              = "Allow Calico BGP from worker nodes"
+  security_group_id        = aws_security_group.control_plane.id
+}
+
+# Control Plane Inbound: calico vxlan
+resource "aws_security_group_rule" "control_plane_ingress_calico_vxlan" {
+  type                     = "ingress"
+  from_port                = local.calico_ports.vxlan
+  to_port                  = local.calico_ports.vxlan
+  protocol                 = "udp"
+  source_security_group_id = aws_security_group.worker_node.id
+  description              = "Allow Calico VXLAN from worker nodes"
+  security_group_id        = aws_security_group.control_plane.id
+}
+
+# Control Plane Inbound: calico IP-In-IP protocol
+resource "aws_security_group_rule" "control_plane_ingress_calico_ipip_protocol" {
+  type                     = "ingress"
+  from_port                = 0
+  to_port                  = 0
+  protocol                 = "4" // IP-In-IP Protocol
+  source_security_group_id = aws_security_group.worker_node.id
+  description              = "Allow Calico IP-In-IP Protocol from worker nodes"
+  security_group_id        = aws_security_group.control_plane.id
+}
+
 # Control Plane Outbound: All (인터넷 접근 필요)
 resource "aws_security_group_rule" "control_plane_egress_all" {
   type              = "egress"
@@ -387,22 +420,22 @@ resource "aws_security_group_rule" "worker_node_ingress_kubelet_control_plane" {
   security_group_id        = aws_security_group.worker_node.id
 }
 
-# Worker Node Inbound: Kubelet from Worker Nodes (Self)
-resource "aws_security_group_rule" "worker_node_ingress_kubelet_self" {
-  type              = "ingress"
-  from_port         = local.k8s_ports.kubelet
-  to_port           = local.k8s_ports.kubelet
-  protocol          = "tcp"
-  self              = true
-  description       = "Allow Kubelet API from other worker nodes"
-  security_group_id = aws_security_group.worker_node.id
-}
-
 # Worker Node Inbound: Application Port from ALB (Instance 모드)
 resource "aws_security_group_rule" "worker_node_ingress_application_alb" {
   type                     = "ingress"
   from_port                = local.k8s_ports.node_port_from
   to_port                  = local.k8s_ports.node_port_to
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.alb.id
+  description              = "Allow application traffic from ALB (Instance mode)"
+  security_group_id        = aws_security_group.worker_node.id
+}
+
+# Worker Node Inbound: Kube-Proxy Port from ALB
+resource "aws_security_group_rule" "worker_node_ingress_kubeproxy_alb" {
+  type                     = "ingress"
+  from_port                = local.k8s_ports.kube_proxy
+  to_port                  = local.k8s_ports.kube_proxy
   protocol                 = "tcp"
   source_security_group_id = aws_security_group.alb.id
   description              = "Allow application traffic from ALB (Instance mode)"
@@ -418,6 +451,39 @@ resource "aws_security_group_rule" "worker_node_ingress_all_self" {
   self              = true
   description       = "Allow all traffic between worker nodes (Pod networking)"
   security_group_id = aws_security_group.worker_node.id
+}
+
+# Worker Node Inbound: calico bgp
+resource "aws_security_group_rule" "worker_node_ingress_calico_bgp" {
+  type                     = "ingress"
+  from_port                = local.calico_ports.bgp
+  to_port                  = local.calico_ports.bgp
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.control_plane.id
+  description              = "Allow Calico BGP from control plane"
+  security_group_id        = aws_security_group.worker_node.id
+}
+
+# Worker Node Inbound: calico vxlan
+resource "aws_security_group_rule" "worker_node_ingress_calico_vxlan" {
+  type                     = "ingress"
+  from_port                = local.calico_ports.vxlan
+  to_port                  = local.calico_ports.vxlan
+  protocol                 = "udp"
+  source_security_group_id = aws_security_group.control_plane.id
+  description              = "Allow Calico VXLAN from control plane"
+  security_group_id        = aws_security_group.worker_node.id
+}
+
+# Worker Node Inbound: calico IP-In-IP protocol
+resource "aws_security_group_rule" "worker_node_ingress_calico_ipip_protocol" {
+  type                     = "ingress"
+  from_port                = 0
+  to_port                  = 0
+  protocol                 = "4" // IP-In-IP Protocol
+  source_security_group_id = aws_security_group.control_plane.id
+  description              = "Allow Calico IP-In-IP Protocol from control plane"
+  security_group_id        = aws_security_group.worker_node.id
 }
 
 # Worker Node Outbound: Kubernetes API to Control Plane

@@ -46,7 +46,7 @@ module "security_groups" {
   private_subnet_cidrs = values(local.private_subnet_cidrs)
 
   # SSH 접근 제어
-  allowed_ssh_cidr = var.allowed_ssh_cidr
+  allowed_ssh_cidrs = var.allowed_ssh_cidrs
 
   # 포트 설정
   application_port = 8080

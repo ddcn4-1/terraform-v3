@@ -23,7 +23,6 @@ locals {
 
   # 모든 SSH 허용 CIDR (단일 + 리스트)
   all_ssh_cidrs = concat(
-    [var.allowed_ssh_cidr],
     var.allowed_ssh_cidrs
   )
 
@@ -33,9 +32,15 @@ locals {
     etcd_client     = 2379
     etcd_peer       = 2380
     kubelet         = 10250
-    kube_scheduler  = 10251
-    kube_controller = 10252
+    kube_controller = 10257
+    kube_proxy      = 10256
+    kube_scheduler  = 10259
     node_port_from  = var.k8s_node_port_range.from
     node_port_to    = var.k8s_node_port_range.to
+  }
+
+  calico_ports = {
+    bgp   = 179
+    vxlan = 4789
   }
 }
