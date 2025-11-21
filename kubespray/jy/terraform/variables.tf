@@ -32,17 +32,10 @@ variable "environment" {
 # 네트워크 설정
 # ==========================================
 
-variable "allowed_ssh_cidr" {
-  description = "Bastion Host SSH 접근 허용 IP (관리자 IP)"
-  type        = string
-
-  # 보안을 위해 기본값 없음 - 반드시 명시적으로 설정
-  # terraform.tfvars에서 설정 필요
-
-  validation {
-    condition     = can(cidrhost(var.allowed_ssh_cidr, 0))
-    error_message = "올바른 CIDR 형식이어야 합니다. (예: 1.2.3.4/32)"
-  }
+variable "allowed_ssh_cidrs" {
+  description = "SSH 접근 허용 IP 리스트 (여러 관리자)"
+  type        = list(string)
+  default     = []
 }
 
 variable "enable_nat_gateway" {

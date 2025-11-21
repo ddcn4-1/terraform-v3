@@ -38,16 +38,6 @@ variable "private_subnet_cidrs" {
 # 접근 제어 설정
 # ==========================================
 
-variable "allowed_ssh_cidr" {
-  description = "Bastion Host SSH 접근 허용 IP (관리자 IP)"
-  type        = string
-
-  validation {
-    condition     = can(cidrhost(var.allowed_ssh_cidr, 0))
-    error_message = "올바른 CIDR 형식이어야 합니다. (예: 1.2.3.4/32)"
-  }
-}
-
 variable "allowed_ssh_cidrs" {
   description = "SSH 접근 허용 IP 리스트 (여러 관리자)"
   type        = list(string)
