@@ -25,7 +25,7 @@ resource "aws_instance" "nat_instance" {
   # Public Subnet A에 배치
   subnet_id = var.public_subnet_a_id
 
-  associate_public_ip_address = false
+  # associate_public_ip_address = false
 
   # Security Group
   vpc_security_group_ids = [var.nat_instance_security_group_id]
@@ -60,6 +60,8 @@ resource "aws_instance" "nat_instance" {
 
   lifecycle {
     create_before_destroy = true
+    prevent_destroy       = true             # 삭제 방지
+    ignore_changes        = [ami, user_data] # AMI ID는 자주 바뀌므로 무시
   }
 }
 
@@ -150,6 +152,12 @@ resource "aws_instance" "bastion" {
       Role = "bastion"
     }
   )
+
+  lifecycle {
+    create_before_destroy = true
+    prevent_destroy       = true             # 삭제 방지
+    ignore_changes        = [ami, user_data] # AMI ID는 자주 바뀌므로 무시
+  }
 }
 
 # EIP를 Bastion Host에 연결
@@ -212,6 +220,12 @@ resource "aws_instance" "control_plane" {
       "kubernetes.io/cluster/${var.k8s_cluster_name}" = "owned"
     }
   )
+
+  lifecycle {
+    create_before_destroy = true
+    prevent_destroy       = true             # 삭제 방지
+    ignore_changes        = [ami, user_data] # AMI ID는 자주 바뀌므로 무시
+  }
 }
 
 # ==========================================
@@ -272,4 +286,10 @@ resource "aws_instance" "worker_nodes" {
       "kubernetes.io/cluster/${var.k8s_cluster_name}" = "owned"
     }
   )
+
+  lifecycle {
+    create_before_destroy = true
+    prevent_destroy       = true             # 삭제 방지
+    ignore_changes        = [ami, user_data] # AMI ID는 자주 바뀌므로 무시
+  }
 }

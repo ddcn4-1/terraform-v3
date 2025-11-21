@@ -357,8 +357,8 @@ resource "aws_security_group_rule" "control_plane_ingress_calico_vxlan" {
 # Control Plane Inbound: calico IP-In-IP protocol
 resource "aws_security_group_rule" "control_plane_ingress_calico_ipip_protocol" {
   type                     = "ingress"
-  from_port                = 0
-  to_port                  = 0
+  from_port                = -1
+  to_port                  = -1
   protocol                 = "4" // IP-In-IP Protocol
   source_security_group_id = aws_security_group.worker_node.id
   description              = "Allow Calico IP-In-IP Protocol from worker nodes"
@@ -478,8 +478,8 @@ resource "aws_security_group_rule" "worker_node_ingress_calico_vxlan" {
 # Worker Node Inbound: calico IP-In-IP protocol
 resource "aws_security_group_rule" "worker_node_ingress_calico_ipip_protocol" {
   type                     = "ingress"
-  from_port                = 0
-  to_port                  = 0
+  from_port                = -1
+  to_port                  = -1
   protocol                 = "4" // IP-In-IP Protocol
   source_security_group_id = aws_security_group.control_plane.id
   description              = "Allow Calico IP-In-IP Protocol from control plane"

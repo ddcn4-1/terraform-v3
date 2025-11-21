@@ -16,7 +16,7 @@ locals {
     Project     = local.project_name
     Environment = local.environment
     ManagedBy   = "Terraform"
-    Team        = "ddcn41"
+    Team        = "kubespray"
     CostCenter  = "Engineering"
   }
 
@@ -40,29 +40,29 @@ locals {
   }
 
   # 도메인 설정
-  domain_name = "pjy.ddcn41.com"
+  domain_name = "kbsp.ddcn41.com"
 
   # Frontend 서브도메인
   frontend_domains = [
-    "pjy.ddcn41.com",
-    "accounts.pjy.ddcn41.com",
-    "admin.pjy.ddcn41.com"
+    "kbsp.ddcn41.com",
+    "accounts.kbsp.ddcn41.com",
+    "admin.kbsp.ddcn41.com"
   ]
 
   # Backend 서브도메인
   backend_domains = [
-    "api.pjy.ddcn41.com",
-    "admin.api.pjy.ddcn41.com",
-    "queue.api.pjy.ddcn41.com"
+    "api.kbsp.ddcn41.com",
+    "admin.api.kbsp.ddcn41.com",
+    "queue.api.kbsp.ddcn41.com"
   ]
 
   # Auth 도메인
-  auth_domain = "auth.api.pjy.ddcn41.com"
+  auth_domain = "auth.api.kbsp.ddcn41.com"
 
   # EC2 인스턴스 타입
   instance_types = {
     control_plane = "t3.small"
-    worker        = "t3.small"
+    worker        = "t3.medium"
     bastion       = "t3.micro"
     nat           = "t3.micro"
   }

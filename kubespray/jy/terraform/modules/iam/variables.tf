@@ -30,6 +30,11 @@ variable "name_prefix" {
 #   default     = "*" # CloudFront 생성 전에는 와일드카드
 # }
 
+variable "velero_backup_s3_name" {
+  description = "Velero Backup S3 버킷 이름"
+  type        = string
+}
+
 # ==========================================
 # ECR 설정
 # ==========================================
