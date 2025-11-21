@@ -74,6 +74,9 @@ module "iam" {
   # # S3 버킷 (Frontend)
   # s3_bucket_names = values(var.s3_bucket_names)
 
+  # S3 버킷 (velero)
+  velero_backup_s3_name = var.velero_backup_s3_name
+
   # # CloudFront (생성 후 업데이트)
   # cloudfront_distribution_arn = "*" # 초기에는 와일드카드
 

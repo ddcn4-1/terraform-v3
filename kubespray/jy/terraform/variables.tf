@@ -175,6 +175,11 @@ variable "s3_bucket_names" {
   }
 }
 
+variable "velero_backup_s3_name" {
+  description = "Velero Backup S3 버킷 이름"
+  type        = string
+}
+
 # ==========================================
 # Route 53 설정
 # ==========================================

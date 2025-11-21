@@ -65,21 +65,47 @@ resource "aws_iam_policy" "external-secret-operator-access" {
   })
 }
 
+# Velero Policy
+resource "aws_iam_policy" "velero-access" {
+  name        = "${var.name_prefix}-velero-access-policy"
+  description = "Allow Velero"
+
+  # 내 계정 ID의 S3 접근 허용
+  policy = templatefile("${path.module}/policies/velero-access-policy.json", {
+    velero_backup_s3_name = "arn:aws:s3:::${var.velero_backup_s3_name}"
+  })
+}
+
 # ==========================================
 # Policies를 Iam role에 등록
 # ==========================================
 
+# ALB Policy 등록
 resource "aws_iam_role_policy_attachment" "alb_controller" {
   role       = aws_iam_role.ec2_kubernetes_instance_role.name
   policy_arn = aws_iam_policy.aws-loadbalancer-controller-access.arn
 }
 
+# External dns Policy 등록
 resource "aws_iam_role_policy_attachment" "external_dns" {
   role       = aws_iam_role.ec2_kubernetes_instance_role.name
   policy_arn = aws_iam_policy.external-dns-access.arn
 }
 
+# External Secrets Operator Policy 등록
 resource "aws_iam_role_policy_attachment" "external_secrets" {
   role       = aws_iam_role.ec2_kubernetes_instance_role.name
   policy_arn = aws_iam_policy.external-secret-operator-access.arn
+}
+
+# Velero Policy 등록
+resource "aws_iam_role_policy_attachment" "velero" {
+  role       = aws_iam_role.ec2_kubernetes_instance_role.name
+  policy_arn = aws_iam_policy.velero-access.arn
+}
+
+# ECR Policy 등록
+resource "aws_iam_role_policy_attachment" "ecr_readonly_policy" {
+  role       = aws_iam_role.ec2_kubernetes_instance_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
