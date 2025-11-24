@@ -1,0 +1,44 @@
+{{- if .Values.ingress.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ticketing-nginx-ingress
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - http:
+        paths:
+          - path: /v1/queue
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $.Values.apps.queue.name }}-service
+                port:
+                  number: {{ $.Values.apps.queue.port }}
+          - path: /v1/admin
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $.Values.apps.admin.name }}-service
+                port:
+                  number: {{ $.Values.apps.admin.port }}
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $.Values.apps.api.name }}-service
+                port:
+                  number: {{ $.Values.apps.api.port }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $.Values.apps.api.name }}-service
+                port:
+                  number: {{ $.Values.apps.api.port }}
+    {{- end }}
+{{- end }}
