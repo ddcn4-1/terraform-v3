@@ -1,0 +1,14 @@
+직apiVersion: v1
+kind: Namespace
+metadata:
+  creationTimestamp: "2025-11-21T02:03:25Z"
+  labels:
+    kubernetes.io/metadata.name: default
+  name: default
+  resourceVersion: "22"
+  uid: ff8c70c7-f2f2-4c25-8c97-1d641d4d8c19
+spec:
+  finalizers:
+  - kubernetes
+status:
+  phase: Active
