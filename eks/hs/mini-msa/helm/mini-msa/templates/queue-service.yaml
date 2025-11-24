@@ -62,7 +62,7 @@ metadata:
   labels:
     {{- include "mini-msa.componentLabels" (dict "root" $root "component" "queue") | nindent 4 }}
     app: queue-service
-    {{- with .Values.global.commonLabels }}
+    {{- with $root.Values.global.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
     {{- with .Values.queueService.podLabels }}
@@ -81,7 +81,7 @@ spec:
         {{- include "mini-msa.selectorLabels" $root | nindent 8 }}
         app.kubernetes.io/component: queue
         app: queue-service
-        {{- with .Values.global.commonLabels }}
+        {{- with $root.Values.global.commonLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
         {{- with .Values.queueService.podLabels }}
@@ -306,7 +306,7 @@ metadata:
   namespace: {{ $appNs }}
   labels:
     {{- include "mini-msa.componentLabels" (dict "root" $root "component" "queue-service") | nindent 4 }}
-    {{- with .Values.global.commonLabels }}
+    {{- with $root.Values.global.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
     app: queue-service

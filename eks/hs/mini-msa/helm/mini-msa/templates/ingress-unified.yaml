@@ -1,0 +1,115 @@
+{{- if .Values.ingress.unified.enabled -}}
+{{- $root := . -}}
+{{- $appNs := include "mini-msa.namespaceName" (dict "root" $root "key" "app") -}}
+{{- $coreName := include "mini-msa.componentName" (dict "root" $root "suffix" (default "core-service" .Values.coreService.nameSuffix) "override" .Values.coreService.fullnameOverride) -}}
+{{- $coreServiceName := default $coreName .Values.coreService.service.name -}}
+{{- $queueName := include "mini-msa.componentName" (dict "root" $root "suffix" (default "queue-service" .Values.queueService.nameSuffix) "override" .Values.queueService.fullnameOverride) -}}
+{{- $queueServiceName := default $queueName .Values.queueService.service.name -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "mini-msa.fullname" $root }}-unified
+  namespace: {{ $appNs }}
+  labels:
+    {{- include "mini-msa.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: ingress
+    {{- with .Values.global.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    # AWS Load Balancer Controller annotations
+    alb.ingress.kubernetes.io/scheme: {{ .Values.ingress.unified.albScheme | default "internet-facing" }}
+    alb.ingress.kubernetes.io/target-type: {{ .Values.ingress.unified.targetType | default "ip" }}
+    alb.ingress.kubernetes.io/load-balancer-name: {{ .Values.ingress.unified.loadBalancerName | default (printf "%s-alb" (include "mini-msa.fullname" $root)) }}
+
+    # Health check configuration
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: {{ .Values.ingress.unified.healthcheck.intervalSeconds | default "30" | quote }}
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: {{ .Values.ingress.unified.healthcheck.timeoutSeconds | default "5" | quote }}
+    alb.ingress.kubernetes.io/healthy-threshold-count: {{ .Values.ingress.unified.healthcheck.healthyThreshold | default "2" | quote }}
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: {{ .Values.ingress.unified.healthcheck.unhealthyThreshold | default "2" | quote }}
+
+    # Target group configuration
+    alb.ingress.kubernetes.io/target-group-attributes: {{ .Values.ingress.unified.targetGroupAttributes | default "deregistration_delay.timeout_seconds=30,stickiness.enabled=true,stickiness.lb_cookie.duration_seconds=86400" }}
+
+    # SSL/TLS configuration (optional)
+    {{- if .Values.ingress.unified.ssl.enabled }}
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: {{ .Values.ingress.unified.ssl.redirect | default "443" | quote }}
+    {{- if .Values.ingress.unified.ssl.certificateArn }}
+    alb.ingress.kubernetes.io/certificate-arn: {{ .Values.ingress.unified.ssl.certificateArn }}
+    {{- end }}
+    {{- else }}
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    {{- end }}
+
+    # Security groups (optional)
+    {{- if .Values.ingress.unified.securityGroups }}
+    alb.ingress.kubernetes.io/security-groups: {{ .Values.ingress.unified.securityGroups }}
+    {{- end }}
+
+    # Subnets (optional)
+    {{- if .Values.ingress.unified.subnets }}
+    alb.ingress.kubernetes.io/subnets: {{ .Values.ingress.unified.subnets }}
+    {{- end }}
+
+    # Tags (optional)
+    {{- if .Values.ingress.unified.tags }}
+    alb.ingress.kubernetes.io/tags: {{ .Values.ingress.unified.tags }}
+    {{- end }}
+
+    # Additional annotations
+    {{- with .Values.ingress.unified.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.unified.className | default "alb" }}
+  rules:
+    {{- range .Values.ingress.unified.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          # Queue Service - /api/queue/* paths
+          - path: /api/queue
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $queueServiceName }}
+                port:
+                  number: {{ $.Values.queueService.service.port }}
+
+          # Queue Service - health and metrics
+          {{- if $.Values.ingress.unified.exposeServiceEndpoints }}
+          - path: /queue/health
+            pathType: Exact
+            backend:
+              service:
+                name: {{ $queueServiceName }}
+                port:
+                  number: {{ $.Values.queueService.service.port }}
+
+          - path: /queue/metrics
+            pathType: Exact
+            backend:
+              service:
+                name: {{ $queueServiceName }}
+                port:
+                  number: {{ $.Values.queueService.service.port }}
+          {{- end }}
+
+          # Core Service - default path (catch-all)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $coreServiceName }}
+                port:
+                  number: {{ $.Values.coreService.service.port }}
+    {{- end }}
+  {{- with .Values.ingress.unified.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
