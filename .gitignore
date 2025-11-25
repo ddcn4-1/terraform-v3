@@ -89,7 +89,7 @@ test-results/
 
 infra/config/cognito-common.yml
 # Helm Values with Secrets
-eks/dh/ticketing-chart/values.yaml
+
 
 # Terraform
 .terraform/
@@ -99,3 +99,10 @@ eks/dh/ticketing-chart/values.yaml
 # Temporary/Backup folders
 eks/dh/copy/
 eks/dh/anti/
+
+# Documentation (Local only)
+eks/dh/ARGOCD_SECRETS.md
+eks/dh/ARGOCD_USAGE.md
+
+eks/dh/backend-ci-template.yaml
+eks/dh/CI_CD_GUIDE.md
