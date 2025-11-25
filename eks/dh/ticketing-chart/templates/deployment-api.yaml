@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.apps.api.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.apps.api.name }}
+spec:
+  replicas: {{ .Values.apps.api.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ .Values.apps.api.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.apps.api.name }}
+    spec:
+      containers:
+        - name: {{ .Values.apps.api.name }}
+          image: "{{ .Values.apps.api.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          ports:
+            - containerPort: {{ .Values.apps.api.port }}
+          envFrom:
+            - configMapRef:
+                name: ticketing-config
+          env:
+            - name: SERVER_PORT
+              value: {{ .Values.apps.api.port | quote }}
+          resources:
+            {{- toYaml .Values.resources.api | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: {{ .Values.apps.api.port }}
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 20
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: {{ .Values.apps.api.port }}
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 20
