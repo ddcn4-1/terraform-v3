@@ -4,7 +4,7 @@
 variable "project_name" {
   description = "Project name (differs from dev to avoid resource conflicts)"
   type        = string
-  default     = "ticket-hs"
+  default     = "ddcn41-eks"
 }
 
 variable "environment" {
@@ -52,7 +52,7 @@ variable "database_subnet_cidrs" {
 variable "kubernetes_version" {
   description = "Kubernetes version"
   type        = string
-  default     = "1.29"
+  default     = "1.32"
 }
 
 variable "node_instance_type" {
@@ -122,9 +122,15 @@ variable "ecr_repository_names" {
 # Disaster Recovery Variables
 # ============================================================================
 variable "enable_dr" {
-  description = "Enable disaster recovery features (cross-region replication)"
+  description = "Enable disaster recovery features (S3/ECR cross-region replication)"
   type        = bool
-  default     = true  # S3 Cross-Region Replication 활성화 (Seoul → Tokyo)
+  default     = true  # S3/ECR Cross-Region Replication (Seoul → Tokyo)
+}
+
+variable "tokyo_cluster_exists" {
+  description = "Whether Tokyo EKS cluster exists for OIDC cross-reference. Set false before destroying Tokyo."
+  type        = bool
+  default     = false  # 도쿄 클러스터 생성 후 true로 변경
 }
 
 variable "velero_backup_retention_days" {

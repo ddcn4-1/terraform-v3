@@ -98,3 +98,12 @@ variable "additional_oidc_providers" {
   type        = list(string)
   default     = []
 }
+
+# ============================================================================
+# Destroy Configuration
+# ============================================================================
+variable "force_destroy" {
+  description = "Force destroy S3 buckets even if they contain objects"
+  type        = bool
+  default     = true
+}

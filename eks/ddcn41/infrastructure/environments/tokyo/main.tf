@@ -100,8 +100,8 @@ data "terraform_remote_state" "seoul" {
 }
 
 # Reference the replicated Velero bucket in Tokyo (created by Seoul's cross-region replication)
-# Seoul 버킷: ticket-hs-velero-prod-ap-northeast-2
-# Tokyo 복제 버킷: ticket-hs-velero-prod-ap-northeast-1
+# Seoul 버킷: ddcn41-eks-velero-prod-ap-northeast-2
+# Tokyo 복제 버킷: ddcn41-eks-velero-prod-ap-northeast-1
 data "aws_s3_bucket" "tokyo_replica_velero" {
   bucket = "${var.project_name}-velero-${var.environment}-ap-northeast-1"
 }

@@ -131,3 +131,12 @@ variable "cross_account_arns" {
   type        = list(string)
   default     = null
 }
+
+# ============================================================================
+# Destroy Configuration
+# ============================================================================
+variable "force_delete" {
+  description = "Force delete repository even if it contains images"
+  type        = bool
+  default     = true
+}

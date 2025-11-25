@@ -88,8 +88,9 @@ resource "aws_kms_alias" "velero" {
 # S3 Bucket for Velero Backups (only when create_bucket is true)
 # ============================================================================
 resource "aws_s3_bucket" "velero" {
-  count  = var.create_bucket ? 1 : 0
-  bucket = local.bucket_name
+  count         = var.create_bucket ? 1 : 0
+  bucket        = local.bucket_name
+  force_destroy = var.force_destroy  # 객체가 있어도 버킷 삭제 허용
 
   tags = {
     Name        = local.bucket_name
@@ -171,9 +172,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "velero" {
 # Cross-Region Replication (Optional - only when creating bucket)
 # ============================================================================
 resource "aws_s3_bucket" "velero_replica" {
-  count    = var.create_bucket && var.enable_cross_region_replication ? 1 : 0
-  provider = aws.replication
-  bucket   = local.replication_bucket
+  count         = var.create_bucket && var.enable_cross_region_replication ? 1 : 0
+  provider      = aws.replication
+  bucket        = local.replication_bucket
+  force_destroy = var.force_destroy  # 객체가 있어도 버킷 삭제 허용
 
   tags = {
     Name        = local.replication_bucket

@@ -77,14 +77,15 @@ data "aws_region" "current" {}
 
 # Tokyo EKS OIDC Provider for multi-region Velero IRSA
 # This allows Tokyo cluster to use Seoul's Velero IAM Role
+# Note: tokyo_cluster_exists must be true only when Tokyo cluster is running
 data "aws_eks_cluster" "tokyo" {
-  count    = var.enable_dr ? 1 : 0
+  count    = var.tokyo_cluster_exists ? 1 : 0
   provider = aws.tokyo
   name     = "${var.project_name}-cluster"
 }
 
 data "aws_iam_openid_connect_provider" "tokyo" {
-  count    = var.enable_dr ? 1 : 0
+  count    = var.tokyo_cluster_exists ? 1 : 0
   provider = aws.tokyo
   url      = data.aws_eks_cluster.tokyo[0].identity[0].oidc[0].issuer
 }
@@ -200,7 +201,7 @@ module "velero" {
   eks_oidc_provider_arn = module.eks.oidc_provider_arn
 
   # Add Tokyo OIDC provider for multi-region IRSA (allows Tokyo to use Seoul's IAM Role)
-  additional_oidc_providers = var.enable_dr ? [data.aws_iam_openid_connect_provider.tokyo[0].arn] : []
+  additional_oidc_providers = var.tokyo_cluster_exists ? [data.aws_iam_openid_connect_provider.tokyo[0].arn] : []
 
   backup_retention_days           = var.velero_backup_retention_days
   backup_transition_glacier_days  = var.velero_glacier_transition_days

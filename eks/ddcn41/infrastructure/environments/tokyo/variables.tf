@@ -4,7 +4,7 @@
 variable "project_name" {
   description = "Project name (same as Seoul for DR consistency)"
   type        = string
-  default     = "ticket-hs"
+  default     = "ddcn41-eks"
 }
 
 variable "environment" {
@@ -52,7 +52,7 @@ variable "database_subnet_cidrs" {
 variable "kubernetes_version" {
   description = "Kubernetes version"
   type        = string
-  default     = "1.29"
+  default     = "1.32"
 }
 
 variable "node_instance_type" {
@@ -122,4 +122,13 @@ variable "velero_glacier_transition_days" {
   description = "Days before moving Velero backups to Glacier"
   type        = number
   default     = 30
+}
+
+# ============================================================================
+# Cross-Region Dependency Variables
+# ============================================================================
+variable "seoul_infrastructure_exists" {
+  description = "Whether Seoul infrastructure exists for cross-region references. Set false when Seoul is destroyed."
+  type        = bool
+  default     = false  # 서울 인프라 생성 후 true로 변경
 }

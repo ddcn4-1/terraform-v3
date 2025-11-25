@@ -11,7 +11,7 @@ variable "environment" {
 }
 
 variable "domain_name" {
-  description = "Private hosted zone domain name (e.g., ticket-hs.internal)"
+  description = "Private hosted zone domain name (e.g., ddcn41-eks.internal)"
   type        = string
 }
 

@@ -13,6 +13,7 @@ resource "aws_ecr_repository" "main" {
 
   name                 = "${var.project_name}/${each.value}"
   image_tag_mutability = var.image_tag_mutability
+  force_delete         = var.force_delete  # 이미지가 있어도 삭제 허용
 
   image_scanning_configuration {
     scan_on_push = var.scan_on_push
