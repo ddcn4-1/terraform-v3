@@ -21,10 +21,18 @@ data:
 
   # AWS Configuration
   AWS_REGION: {{ .Values.global.env.AWS_REGION | quote }}
+  
+  # For explicit placeholders (e.g. ${COGNITO_REGION})
   COGNITO_USER_POOL_ID: {{ .Values.global.env.COGNITO_USER_POOL_ID | quote }}
   COGNITO_CLIENT_ID: {{ .Values.global.env.COGNITO_CLIENT_ID | quote }}
   COGNITO_ENABLED: {{ .Values.global.env.COGNITO_ENABLED | quote }}
   COGNITO_REGION: {{ .Values.global.env.COGNITO_REGION | quote }}
+
+  # For Spring Boot Relaxed Binding (e.g. auth.cognito.region)
+  AUTH_COGNITO_USER_POOL_ID: {{ .Values.global.env.COGNITO_USER_POOL_ID | quote }}
+  AUTH_COGNITO_CLIENT_ID: {{ .Values.global.env.COGNITO_CLIENT_ID | quote }}
+  AUTH_COGNITO_ENABLED: {{ .Values.global.env.COGNITO_ENABLED | quote }}
+  AUTH_COGNITO_REGION: {{ .Values.global.env.COGNITO_REGION | quote }}
 
   # Redis Settings (Used in Admin)
   REDIS_HOST_LOCAL: {{ .Values.global.env.SPRING_REDIS_HOST | quote }}
