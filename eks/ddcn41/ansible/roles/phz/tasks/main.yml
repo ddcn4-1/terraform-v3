@@ -1,0 +1,17 @@
+---
+# PHZ Role - Route53 Private Hosted Zone Management for DR
+#
+# This role manages DNS record updates during DR failover
+# using AWS CLI to update RDS and ElastiCache endpoints
+
+- name: Include update tasks
+  ansible.builtin.include_tasks: update.yml
+  when: action == "update"
+
+- name: Include verify tasks
+  ansible.builtin.include_tasks: verify.yml
+  when: action == "verify"
+
+- name: Include rollback tasks
+  ansible.builtin.include_tasks: rollback.yml
+  when: action == "rollback"

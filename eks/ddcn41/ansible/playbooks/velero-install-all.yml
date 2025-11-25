@@ -1,0 +1,73 @@
+---
+# Velero Install All - Seoul & Tokyo 동시 설치
+#
+# Usage: ansible-playbook playbooks/velero-install-all.yml
+
+- name: Install Velero on All Clusters (Seoul & Tokyo)
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    # Velero defaults (from roles/velero/defaults/main.yml)
+    velero_namespace: velero
+    velero_version: "1.14.0"
+    velero_plugin_version: "1.10.0"
+    velero_helm_repo: "https://vmware-tanzu.github.io/helm-charts"
+    velero_helm_chart_version: "7.2.1"
+
+    clusters:
+      - name: seoul
+        region: ap-northeast-2
+        cluster_name: ticket-hs-cluster
+        bucket: ticket-hs-velero-prod-ap-northeast-2
+        terraform_dir: "{{ playbook_dir }}/../../infrastructure/environments/seoul"
+        is_primary: true
+        velero_role_source: ""
+
+      - name: tokyo
+        region: ap-northeast-1
+        cluster_name: ticket-hs-cluster
+        bucket: ticket-hs-velero-prod-ap-northeast-1
+        terraform_dir: "{{ playbook_dir }}/../../infrastructure/environments/tokyo"
+        is_primary: false
+        velero_role_source: seoul  # Tokyo는 Seoul의 IAM Role 재사용
+
+  tasks:
+    - name: Display installation plan
+      ansible.builtin.debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════════╗
+          ║           Velero Multi-Cluster Installation                      ║
+          ╠══════════════════════════════════════════════════════════════════╣
+          {% for cluster in clusters %}
+          ║  {{ cluster.name | upper }}: {{ cluster.cluster_name }} ({{ cluster.region }})
+          {% endfor %}
+          ╚══════════════════════════════════════════════════════════════════╝
+
+    - name: Install Velero on each cluster
+      ansible.builtin.include_tasks: ../roles/velero/tasks/install.yml
+      vars:
+        aws_region: "{{ item.region }}"
+        cluster_name: "{{ item.cluster_name }}"
+        velero_bucket: "{{ item.bucket }}"
+        terraform_dir: "{{ item.terraform_dir }}"
+        velero_role_source: "{{ item.velero_role_source }}"
+      loop: "{{ clusters }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Installation complete
+      ansible.builtin.debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════════╗
+          ║           Installation Complete                                  ║
+          ╠══════════════════════════════════════════════════════════════════╣
+          ║  Seoul: ticket-hs-velero-prod-ap-northeast-2                     ║
+          ║  Tokyo: ticket-hs-velero-prod-ap-northeast-1                     ║
+          ║                                                                  ║
+          ║  S3 Replication: Seoul → Tokyo (자동)                            ║
+          ╚══════════════════════════════════════════════════════════════════╝
+
+          Next steps:
+          1. Seoul에서 백업 생성: make seoul-backup NAME=my-backup
+          2. Tokyo에서 복구 테스트: make tokyo-restore BACKUP=my-backup

@@ -1,0 +1,113 @@
+---
+# Velero restore tasks
+
+- name: Update kubeconfig for target cluster
+  ansible.builtin.command:
+    cmd: "aws eks update-kubeconfig --region {{ aws_region }} --name {{ cluster_name }}"
+  changed_when: true
+
+- name: Validate backup_name is provided
+  ansible.builtin.fail:
+    msg: "backup_name variable is required for restore operation"
+  when: backup_name is not defined or backup_name == ''
+
+- name: Wait for backup to be synced (from S3 replication)
+  ansible.builtin.pause:
+    seconds: 30
+    prompt: "Waiting for S3 replication sync..."
+  when: wait_for_sync | default(true)
+
+- name: List available backups
+  ansible.builtin.command:
+    cmd: "velero backup get"
+  register: available_backups
+  changed_when: false
+
+- name: Display available backups
+  ansible.builtin.debug:
+    msg: "{{ available_backups.stdout_lines }}"
+
+- name: Check if backup exists
+  ansible.builtin.command:
+    cmd: "velero backup describe {{ backup_name }}"
+  register: backup_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail if backup not found
+  ansible.builtin.fail:
+    msg: "Backup '{{ backup_name }}' not found. Available backups: {{ available_backups.stdout }}"
+  when: backup_check.rc != 0
+
+- name: Generate restore name
+  ansible.builtin.set_fact:
+    restore_name: "{{ restore_name | default('restore-' + backup_name + '-' + ansible_date_time.epoch) }}"
+
+- name: Create Velero restore
+  ansible.builtin.command:
+    cmd: >
+      velero restore create {{ restore_name }}
+      --from-backup {{ backup_name }}
+      {% if restore_namespaces is defined %}
+      --include-namespaces {{ restore_namespaces | join(',') }}
+      {% endif %}
+      {% if restore_exclude_namespaces is defined %}
+      --exclude-namespaces {{ restore_exclude_namespaces | join(',') }}
+      {% endif %}
+      {% if namespace_mappings is defined %}
+      --namespace-mappings {{ namespace_mappings }}
+      {% endif %}
+      --wait
+  register: restore_result
+  changed_when: restore_result.rc == 0
+
+- name: Get restore status
+  ansible.builtin.command:
+    cmd: "velero restore get {{ restore_name }} -o json"
+  register: restore_status_json
+  changed_when: false
+
+- name: Parse restore status
+  ansible.builtin.set_fact:
+    restore_phase: "{{ (restore_status_json.stdout | from_json).status.phase }}"
+
+- name: Check restore status
+  ansible.builtin.fail:
+    msg: "Restore failed with phase: {{ restore_phase }}"
+  when: restore_phase == 'Failed'
+
+- name: Get restore details for display
+  ansible.builtin.command:
+    cmd: "velero restore describe {{ restore_name }}"
+  register: restore_status
+  changed_when: false
+
+- name: Display restore details
+  ansible.builtin.debug:
+    msg: |
+      Restore '{{ restore_name }}' completed.
+      Status:
+      {{ restore_status.stdout }}
+
+- name: Get restore logs
+  ansible.builtin.command:
+    cmd: "velero restore logs {{ restore_name }}"
+  register: restore_logs
+  changed_when: false
+
+- name: Display restore warnings (if any)
+  ansible.builtin.debug:
+    msg: "{{ restore_logs.stdout_lines | select('search', 'warning|error') | list }}"
+  when: restore_logs.stdout_lines | select('search', 'warning|error') | list | length > 0
+
+- name: Verify restored resources
+  ansible.builtin.command:
+    cmd: "kubectl get all --all-namespaces -l velero.io/restore-name={{ restore_name }}"
+  register: restored_resources
+  changed_when: false
+  failed_when: false
+
+- name: Display restored resources
+  ansible.builtin.debug:
+    msg: "{{ restored_resources.stdout_lines }}"
+  when: restored_resources.rc == 0

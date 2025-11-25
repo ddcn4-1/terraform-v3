@@ -1,0 +1,42 @@
+---
+# Velero Backup Playbook
+# Usage: ansible-playbook playbooks/velero-backup.yml -e "target=seoul backup_name=my-backup"
+#        ansible-playbook playbooks/velero-backup.yml -e "target=seoul backup_namespaces=['default','app']"
+
+- name: Create Velero Backup
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    action: backup
+    # Lookup cluster config from inventory based on target
+    _cluster_cfg: "{{ cluster_configs[target | default('seoul')] }}"
+    region: "{{ _cluster_cfg.region }}"
+    cluster_name: "{{ _cluster_cfg.cluster_name }}"
+    velero_bucket: "{{ _cluster_cfg.velero_bucket }}"
+    is_primary: "{{ _cluster_cfg.is_primary }}"
+    velero_role_source: "{{ _cluster_cfg.velero_role_source }}"
+
+  pre_tasks:
+    - name: Generate default backup name
+      ansible.builtin.set_fact:
+        backup_name: "{{ backup_name | default('backup-' + ansible_date_time.iso8601_basic_short) }}"
+
+    - name: Display backup info
+      ansible.builtin.debug:
+        msg: |
+          Creating backup:
+            Name: {{ backup_name }}
+            Cluster: {{ cluster_name }}
+            Region: {{ region }}
+            TTL: {{ backup_ttl | default('720h') }}
+
+  roles:
+    - velero
+
+  post_tasks:
+    - name: Backup complete
+      ansible.builtin.debug:
+        msg: |
+          Backup '{{ backup_name }}' created successfully!
+          S3 Location: s3://{{ velero_bucket }}/backups/{{ backup_name }}/

@@ -1,0 +1,152 @@
+---
+# DR Failover - 전체 프로세스 자동화
+# Seoul 장애 시 Tokyo에서 복구하는 전체 워크플로우
+
+- name: "=== DR FAILOVER START ==="
+  ansible.builtin.debug:
+    msg: |
+      ============================================
+      DR Failover Process Starting
+      Source: Seoul ({{ seoul_region }})
+      Target: Tokyo ({{ tokyo_region }})
+      Backup: {{ backup_name }}
+      ============================================
+
+# Phase 1: Tokyo 클러스터에 Velero 설치
+- name: "Phase 1: Install Velero on Tokyo cluster"
+  block:
+    - name: Set Tokyo cluster context
+      ansible.builtin.set_fact:
+        aws_region: "{{ tokyo_region }}"
+        cluster_name: "{{ tokyo_cluster }}"
+        velero_bucket: "{{ tokyo_bucket }}"
+
+    - name: Update kubeconfig for Tokyo
+      ansible.builtin.command:
+        cmd: "aws eks update-kubeconfig --region {{ tokyo_region }} --name {{ tokyo_cluster }}"
+      changed_when: true
+
+    - name: Include Velero install tasks
+      ansible.builtin.include_tasks: install.yml
+      vars:
+        terraform_dir: "{{ playbook_dir }}/../../infrastructure/environments/tokyo"
+
+# Phase 2: S3 복제 대기 및 백업 확인
+- name: "Phase 2: Wait for S3 replication and verify backup"
+  block:
+    - name: Wait for S3 cross-region replication
+      ansible.builtin.pause:
+        seconds: "{{ s3_replication_wait | default(60) }}"
+        prompt: "Waiting {{ s3_replication_wait | default(60) }}s for S3 replication to complete..."
+
+    - name: Force Velero to sync backups from S3
+      ansible.builtin.command:
+        cmd: "velero backup-location get"
+      register: bsl_check
+      changed_when: false
+
+    - name: Wait for backup to appear
+      ansible.builtin.command:
+        cmd: "velero backup get {{ backup_name }}"
+      register: backup_available
+      until: backup_available.rc == 0
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Display backup info
+      ansible.builtin.command:
+        cmd: "velero backup describe {{ backup_name }}"
+      register: backup_info
+      changed_when: false
+
+    - name: Show backup details
+      ansible.builtin.debug:
+        msg: "{{ backup_info.stdout_lines }}"
+
+# Phase 3: 복구 실행
+- name: "Phase 3: Execute restore"
+  block:
+    - name: Set restore name
+      ansible.builtin.set_fact:
+        restore_name: "dr-failover-{{ ansible_date_time.iso8601_basic_short }}"
+
+    - name: Create restore from backup
+      ansible.builtin.command:
+        cmd: "velero restore create {{ restore_name }} --from-backup {{ backup_name }}"
+      register: restore_create
+      changed_when: restore_create.rc == 0
+
+    - name: Wait for restore to complete
+      ansible.builtin.command:
+        cmd: "velero restore describe {{ restore_name }}"
+      register: restore_status
+      until: "'Phase:  Completed' in restore_status.stdout or 'Phase:  PartiallyFailed' in restore_status.stdout or 'Phase:  Failed' in restore_status.stdout"
+      retries: "{{ (restore_wait_timeout / 10) | int }}"
+      delay: 10
+      changed_when: false
+
+    - name: Check for restore failures
+      ansible.builtin.fail:
+        msg: "Restore failed! Check logs: velero restore logs {{ restore_name }}"
+      when: "'Phase:  Failed' in restore_status.stdout"
+
+    - name: Display restore status
+      ansible.builtin.debug:
+        msg: "{{ restore_status.stdout_lines }}"
+
+# Phase 4: 복구 검증
+- name: "Phase 4: Verify restored resources"
+  block:
+    - name: List all pods in restored namespaces
+      ansible.builtin.command:
+        cmd: "kubectl get pods --all-namespaces"
+      register: all_pods
+      changed_when: false
+
+    - name: Display pods status
+      ansible.builtin.debug:
+        msg: "{{ all_pods.stdout_lines }}"
+
+    - name: Wait for pods to be ready
+      ansible.builtin.command:
+        cmd: "kubectl wait --for=condition=Ready pods --all --all-namespaces --timeout=300s"
+      register: pods_ready
+      changed_when: false
+      failed_when: false
+
+    - name: Display pod readiness result
+      ansible.builtin.debug:
+        msg: "{{ pods_ready.stdout_lines }}"
+
+# Phase 5: 정리 (옵션)
+- name: "Phase 5: Cleanup (optional)"
+  when: cleanup_after_restore | default(false)
+  block:
+    - name: Wait before cleanup
+      ansible.builtin.pause:
+        seconds: "{{ cleanup_delay_seconds }}"
+        prompt: "Restore complete. Waiting {{ cleanup_delay_seconds }}s before cleanup..."
+
+    - name: Include uninstall tasks
+      ansible.builtin.include_tasks: uninstall.yml
+      vars:
+        delete_backups: false
+        delete_restores: false
+        delete_namespace: true
+
+- name: "=== DR FAILOVER COMPLETE ==="
+  ansible.builtin.debug:
+    msg: |
+      ============================================
+      DR Failover Completed Successfully!
+
+      Cluster: {{ tokyo_cluster }}
+      Region: {{ tokyo_region }}
+      Restore Name: {{ restore_name }}
+
+      Next steps:
+      1. Verify application functionality
+      2. Update DNS/Load Balancer to point to Tokyo
+      3. Monitor application logs
+      ============================================

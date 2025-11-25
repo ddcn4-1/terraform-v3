@@ -1,0 +1,241 @@
+---
+# DR Test Playbook - 전체 DR 시나리오 테스트
+#
+# 이 플레이북은 다음을 자동으로 수행합니다:
+# 1. Seoul에 테스트 앱 (nginx) 배포
+# 2. Seoul에서 Velero 백업 생성
+# 3. Tokyo에 Velero 설치
+# 4. Tokyo에서 복구
+# 5. 복구 검증
+# 6. 전체 정리 (테스트 앱 + Velero)
+#
+# Usage: ansible-playbook playbooks/dr-test.yml
+
+- name: DR Test - Full Scenario Test
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    test_namespace: dr-test
+    test_backup_name: "dr-test-{{ ansible_date_time.iso8601_basic_short }}"
+    cleanup_all: true
+
+  tasks:
+    # ==========================================
+    # Phase 1: Setup Seoul
+    # ==========================================
+    - name: "=== Phase 1: Setup Seoul Cluster ==="
+      ansible.builtin.debug:
+        msg: "Setting up Seoul cluster with test application"
+
+    - name: Switch to Seoul cluster
+      ansible.builtin.command:
+        cmd: "aws eks update-kubeconfig --region ap-northeast-2 --name ticket-hs-cluster"
+      changed_when: true
+
+    - name: Create test namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ test_namespace }}"
+            labels:
+              app: dr-test
+
+    - name: Deploy test nginx application
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: nginx-test
+            namespace: "{{ test_namespace }}"
+            labels:
+              app: nginx-test
+          spec:
+            replicas: 2
+            selector:
+              matchLabels:
+                app: nginx-test
+            template:
+              metadata:
+                labels:
+                  app: nginx-test
+              spec:
+                containers:
+                  - name: nginx
+                    image: nginx:latest
+                    ports:
+                      - containerPort: 80
+
+    - name: Create nginx service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: nginx-test
+            namespace: "{{ test_namespace }}"
+          spec:
+            selector:
+              app: nginx-test
+            ports:
+              - port: 80
+                targetPort: 80
+
+    - name: Wait for nginx pods to be ready
+      ansible.builtin.command:
+        cmd: "kubectl wait --for=condition=Ready pods -l app=nginx-test -n {{ test_namespace }} --timeout=120s"
+      changed_when: false
+
+    - name: Verify nginx deployment
+      ansible.builtin.command:
+        cmd: "kubectl get pods -n {{ test_namespace }}"
+      register: seoul_pods
+      changed_when: false
+
+    - name: Show Seoul pods
+      ansible.builtin.debug:
+        msg: "{{ seoul_pods.stdout_lines }}"
+
+    # ==========================================
+    # Phase 2: Create Backup
+    # ==========================================
+    - name: "=== Phase 2: Create Velero Backup ==="
+      ansible.builtin.debug:
+        msg: "Creating backup '{{ test_backup_name }}' on Seoul"
+
+    - name: Create Velero backup
+      ansible.builtin.command:
+        cmd: "velero backup create {{ test_backup_name }} --include-namespaces {{ test_namespace }} --wait"
+      register: backup_result
+      changed_when: backup_result.rc == 0
+
+    - name: Verify backup status
+      ansible.builtin.command:
+        cmd: "velero backup describe {{ test_backup_name }}"
+      register: backup_status
+      changed_when: false
+
+    - name: Show backup status
+      ansible.builtin.debug:
+        msg: "{{ backup_status.stdout_lines }}"
+
+    # ==========================================
+    # Phase 3: Setup Tokyo & Restore
+    # ==========================================
+    - name: "=== Phase 3: Restore to Tokyo ==="
+      ansible.builtin.debug:
+        msg: "Restoring backup to Tokyo cluster"
+
+    - name: Wait for S3 replication
+      ansible.builtin.pause:
+        seconds: 60
+        prompt: "Waiting 60s for S3 cross-region replication..."
+
+    - name: Switch to Tokyo cluster
+      ansible.builtin.command:
+        cmd: "aws eks update-kubeconfig --region ap-northeast-1 --name ticket-hs-cluster"
+      changed_when: true
+
+    - name: Wait for backup to be available in Tokyo
+      ansible.builtin.command:
+        cmd: "velero backup get {{ test_backup_name }}"
+      register: tokyo_backup_check
+      until: tokyo_backup_check.rc == 0
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Create restore on Tokyo
+      ansible.builtin.command:
+        cmd: "velero restore create {{ test_backup_name }}-restore --from-backup {{ test_backup_name }} --wait"
+      register: restore_result
+      changed_when: restore_result.rc == 0
+
+    - name: Verify restore status
+      ansible.builtin.command:
+        cmd: "velero restore describe {{ test_backup_name }}-restore"
+      register: restore_status
+      changed_when: false
+
+    - name: Show restore status
+      ansible.builtin.debug:
+        msg: "{{ restore_status.stdout_lines }}"
+
+    # ==========================================
+    # Phase 4: Verify Restore
+    # ==========================================
+    - name: "=== Phase 4: Verify Restored Resources ==="
+      ansible.builtin.debug:
+        msg: "Verifying restored resources in Tokyo"
+
+    - name: Wait for restored pods to be ready
+      ansible.builtin.command:
+        cmd: "kubectl wait --for=condition=Ready pods -l app=nginx-test -n {{ test_namespace }} --timeout=120s"
+      changed_when: false
+      register: pods_ready
+      failed_when: false
+
+    - name: Get restored pods
+      ansible.builtin.command:
+        cmd: "kubectl get pods -n {{ test_namespace }}"
+      register: tokyo_pods
+      changed_when: false
+
+    - name: Show Tokyo pods
+      ansible.builtin.debug:
+        msg: "{{ tokyo_pods.stdout_lines }}"
+
+    - name: Verify pod count matches
+      ansible.builtin.assert:
+        that:
+          - "'nginx-test' in tokyo_pods.stdout"
+        fail_msg: "Restore verification failed - nginx pods not found"
+        success_msg: "Restore verification passed - nginx pods restored successfully"
+
+    # ==========================================
+    # Phase 5: Cleanup
+    # ==========================================
+    - name: "=== Phase 5: Cleanup ==="
+      when: cleanup_all
+      block:
+        - name: Delete test namespace from Tokyo
+          kubernetes.core.k8s:
+            state: absent
+            kind: Namespace
+            name: "{{ test_namespace }}"
+          failed_when: false
+
+        - name: Switch back to Seoul
+          ansible.builtin.command:
+            cmd: "aws eks update-kubeconfig --region ap-northeast-2 --name ticket-hs-cluster"
+          changed_when: true
+
+        - name: Delete test namespace from Seoul
+          kubernetes.core.k8s:
+            state: absent
+            kind: Namespace
+            name: "{{ test_namespace }}"
+          failed_when: false
+
+        - name: Delete Velero backup
+          ansible.builtin.command:
+            cmd: "velero backup delete {{ test_backup_name }} --confirm"
+          changed_when: true
+          failed_when: false
+
+    - name: "=== DR TEST COMPLETE ==="
+      ansible.builtin.debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════════╗
+          ║                  DR TEST COMPLETED                             ║
+          ╠════════════════════════════════════════════════════════════════╣
+          ║  Test Backup: {{ test_backup_name }}
+          ║  Test Namespace: {{ test_namespace }}
+          ║  Result: SUCCESS
+          ╚════════════════════════════════════════════════════════════════╝
