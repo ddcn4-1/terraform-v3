@@ -7,7 +7,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/ddcn4-1/terraform-v3.git
-    targetRevision: HEAD
+    targetRevision: eks-dh
     path: eks/dh/ticketing-chart
   destination:
     server: https://kubernetes.default.svc
