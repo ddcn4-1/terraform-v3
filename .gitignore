@@ -88,3 +88,14 @@ test-results/
 *.pid.lock
 
 infra/config/cognito-common.yml
+# Helm Values with Secrets
+eks/dh/ticketing-chart/values.yaml
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+# Temporary/Backup folders
+eks/dh/copy/
+eks/dh/anti/
