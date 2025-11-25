@@ -39,13 +39,16 @@ help: ## Show this help
 	@echo ""
 	@echo "$(GREEN)Seoul (Primary) Operations:$(NC)"
 	@echo "  make seoul-install     Install Velero on Seoul cluster"
-	@echo "  make seoul-backup      Create backup on Seoul"
+	@echo "  make seoul-backup      Create backup (all namespaces)"
 	@echo "  make seoul-backup NAME=my-backup  Create named backup"
+	@echo "  make seoul-backup NS=ticketing    Create namespace backup"
+	@echo "  make seoul-backup-full NAME=full  Create full cluster backup"
 	@echo "  make seoul-uninstall   Uninstall Velero from Seoul"
 	@echo ""
 	@echo "$(GREEN)Tokyo (DR) Operations:$(NC)"
 	@echo "  make tokyo-install     Install Velero on Tokyo cluster"
-	@echo "  make tokyo-restore BACKUP=name  Restore backup to Tokyo"
+	@echo "  make tokyo-restore BACKUP=name       Restore backup to Tokyo"
+	@echo "  make tokyo-restore-full BACKUP=name  Restore + PHZ update"
 	@echo "  make tokyo-uninstall   Uninstall Velero from Tokyo"
 	@echo ""
 	@echo "$(GREEN)DR Operations:$(NC)"
@@ -113,12 +116,26 @@ seoul-install: ## Install Velero on Seoul cluster
 	@echo "$(BLUE)Installing Velero on Seoul...$(NC)"
 	ansible-playbook $(PLAYBOOK_DIR)/velero-install.yml -e "target=seoul"
 
-seoul-backup: ## Create backup on Seoul (NAME=backup-name)
+seoul-backup: ## Create backup on Seoul (NAME=backup-name, NS=namespace)
 	@echo "$(BLUE)Creating backup on Seoul...$(NC)"
+ifdef NS
 ifdef NAME
+	ansible-playbook $(PLAYBOOK_DIR)/velero-backup.yml -e "target=seoul backup_name=$(NAME) backup_namespaces=['$(NS)']"
+else
+	ansible-playbook $(PLAYBOOK_DIR)/velero-backup.yml -e "target=seoul backup_namespaces=['$(NS)']"
+endif
+else ifdef NAME
 	ansible-playbook $(PLAYBOOK_DIR)/velero-backup.yml -e "target=seoul backup_name=$(NAME)"
 else
 	ansible-playbook $(PLAYBOOK_DIR)/velero-backup.yml -e "target=seoul"
+endif
+
+seoul-backup-full: ## Create full cluster backup on Seoul (NAME=backup-name)
+	@echo "$(BLUE)Creating FULL backup on Seoul (all namespaces)...$(NC)"
+ifdef NAME
+	ansible-playbook $(PLAYBOOK_DIR)/velero-backup.yml -e "target=seoul backup_name=$(NAME)"
+else
+	ansible-playbook $(PLAYBOOK_DIR)/velero-backup.yml -e "target=seoul backup_name=full-backup-$$(date +%Y%m%d-%H%M%S)"
 endif
 
 seoul-uninstall: ## Uninstall Velero from Seoul
@@ -140,6 +157,17 @@ ifndef BACKUP
 endif
 	@echo "$(BLUE)Restoring '$(BACKUP)' to Tokyo...$(NC)"
 	ansible-playbook $(PLAYBOOK_DIR)/velero-restore.yml -e "target=tokyo backup_name=$(BACKUP)"
+
+tokyo-restore-full: ## Restore full backup to Tokyo with PHZ update (BACKUP=name required)
+ifndef BACKUP
+	@echo "$(RED)Error: BACKUP is required$(NC)"
+	@echo "Usage: make tokyo-restore-full BACKUP=backup-name"
+	@exit 1
+endif
+	@echo "$(BLUE)Restoring '$(BACKUP)' to Tokyo...$(NC)"
+	ansible-playbook $(PLAYBOOK_DIR)/velero-restore.yml -e "target=tokyo backup_name=$(BACKUP)"
+	@echo "$(BLUE)Updating PHZ DNS to Tokyo endpoints...$(NC)"
+	ansible-playbook $(PLAYBOOK_DIR)/phz-update.yml -e "target_region=tokyo auto_confirm=true"
 
 tokyo-uninstall: ## Uninstall Velero from Tokyo
 	@echo "$(YELLOW)Uninstalling Velero from Tokyo...$(NC)"
@@ -207,11 +235,11 @@ phz-verify: ## Verify current PHZ DNS records
 		echo ""; \
 		echo "RDS Record:"; \
 		aws route53 list-resource-record-sets --hosted-zone-id $$PHZ_ZONE_ID \
-			--query "ResourceRecordSets[?Name=='db.ticket-hs.internal.']" --output table; \
+			--query "ResourceRecordSets[?Name=='db.ddcn41.internal.']" --output table; \
 		echo ""; \
 		echo "Redis Record:"; \
 		aws route53 list-resource-record-sets --hosted-zone-id $$PHZ_ZONE_ID \
-			--query "ResourceRecordSets[?Name=='redis.ticket-hs.internal.']" --output table; \
+			--query "ResourceRecordSets[?Name=='redis.ddcn41.internal.']" --output table; \
 	else \
 		echo "$(RED)PHZ Zone ID not found. Run 'terraform apply' on Seoul first.$(NC)"; \
 	fi
@@ -228,7 +256,7 @@ clean: ## Force cleanup failed Velero installation (current cluster)
 
 clean-seoul: ## Force cleanup Velero from Seoul
 	@echo "$(YELLOW)Force cleaning Velero from Seoul...$(NC)"
-	aws eks update-kubeconfig --region ap-northeast-2 --name ticket-hs-cluster
+	aws eks update-kubeconfig --region ap-northeast-2 --name ddcn41-eks-cluster
 	helm uninstall velero -n velero 2>/dev/null || true
 	kubectl delete namespace velero --ignore-not-found --wait=false
 	kubectl delete namespace velero --force --grace-period=0 2>/dev/null || true
@@ -236,7 +264,7 @@ clean-seoul: ## Force cleanup Velero from Seoul
 
 clean-tokyo: ## Force cleanup Velero from Tokyo
 	@echo "$(YELLOW)Force cleaning Velero from Tokyo...$(NC)"
-	aws eks update-kubeconfig --region ap-northeast-1 --name ticket-hs-cluster
+	aws eks update-kubeconfig --region ap-northeast-1 --name ddcn41-eks-cluster
 	helm uninstall velero -n velero 2>/dev/null || true
 	kubectl delete namespace velero --ignore-not-found --wait=false
 	kubectl delete namespace velero --force --grace-period=0 2>/dev/null || true

@@ -18,16 +18,16 @@
     clusters:
       - name: seoul
         region: ap-northeast-2
-        cluster_name: ticket-hs-cluster
-        bucket: ticket-hs-velero-prod-ap-northeast-2
+        cluster_name: ddcn41-eks-cluster
+        bucket: ddcn41-eks-velero-prod-ap-northeast-2
         terraform_dir: "{{ playbook_dir }}/../../infrastructure/environments/seoul"
         is_primary: true
         velero_role_source: ""
 
       - name: tokyo
         region: ap-northeast-1
-        cluster_name: ticket-hs-cluster
-        bucket: ticket-hs-velero-prod-ap-northeast-1
+        cluster_name: ddcn41-eks-cluster
+        bucket: ddcn41-eks-velero-prod-ap-northeast-1
         terraform_dir: "{{ playbook_dir }}/../../infrastructure/environments/tokyo"
         is_primary: false
         velero_role_source: seoul  # Tokyo는 Seoul의 IAM Role 재사용
@@ -62,8 +62,8 @@
           ╔══════════════════════════════════════════════════════════════════╗
           ║           Installation Complete                                  ║
           ╠══════════════════════════════════════════════════════════════════╣
-          ║  Seoul: ticket-hs-velero-prod-ap-northeast-2                     ║
-          ║  Tokyo: ticket-hs-velero-prod-ap-northeast-1                     ║
+          ║  Seoul: ddcn41-eks-velero-prod-ap-northeast-2                    ║
+          ║  Tokyo: ddcn41-eks-velero-prod-ap-northeast-1                    ║
           ║                                                                  ║
           ║  S3 Replication: Seoul → Tokyo (자동)                            ║
           ╚══════════════════════════════════════════════════════════════════╝

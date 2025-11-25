@@ -9,16 +9,16 @@ Seoul → Tokyo 클러스터 마이그레이션 테스트 워크플로우
 │                         글로벌 리소스 (Seoul에서 생성)                    │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  IAM Roles:                                                             │
-│  - ticket-hs-eks-cluster-role     (EKS Cluster)                        │
-│  - ticket-hs-eks-node-role        (EKS Node Group)                     │
-│  - ticket-hs-velero-irsa-prod     (Velero IRSA)                        │
-│  - ticket-hs-aws-backup-role-prod (AWS Backup)                         │
-│  - ticket-hs-velero-replication-role (S3 Cross-Region Replication)     │
+│  - ddcn41-eks-eks-cluster-role    (EKS Cluster)                        │
+│  - ddcn41-eks-eks-node-role       (EKS Node Group)                     │
+│  - ddcn41-eks-velero-irsa-prod    (Velero IRSA)                        │
+│  - ddcn41-eks-aws-backup-role-prod (AWS Backup)                        │
+│  - ddcn41-eks-velero-replication-role (S3 Cross-Region Replication)    │
 │                                                                         │
 │  PHZ (Private Hosted Zone):                                            │
-│  - ticket-hs.internal (Seoul/Tokyo VPC 모두 연결)                       │
-│    └─ db.ticket-hs.internal    → 활성 리전 RDS                          │
-│    └─ redis.ticket-hs.internal → 활성 리전 Redis                        │
+│  - ddcn41.internal (Seoul/Tokyo VPC 모두 연결)                          │
+│    └─ db.ddcn41.internal    → 활성 리전 RDS                             │
+│    └─ redis.ddcn41.internal → 활성 리전 Redis                           │
 └─────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────┐     S3 CRR      ┌─────────────────────────────┐
@@ -48,7 +48,7 @@ Seoul → Tokyo 클러스터 마이그레이션 테스트 워크플로우
 **중요: Seoul을 먼저 배포해야 Tokyo가 IAM Role ARN을 참조할 수 있음**
 
 ```bash
-cd eks/dh/infrastructure
+cd eks/ddcn41/infrastructure
 
 # 1) Seoul 먼저 배포
 make seoul-plan
@@ -72,7 +72,7 @@ make tokyo-output
 
 ### 2. Ansible 의존성 설치
 ```bash
-cd eks/dh/ansible
+cd eks/ddcn41/ansible
 make deps
 make check
 ```
@@ -80,7 +80,7 @@ make check
 ### 3. kubectl 컨텍스트 확인
 ```bash
 # Seoul 클러스터 연결
-aws eks update-kubeconfig --region ap-northeast-2 --name ticket-hs-cluster
+aws eks update-kubeconfig --region ap-northeast-2 --name ddcn41-eks-cluster
 
 # 노드 확인
 kubectl get nodes
@@ -123,7 +123,7 @@ aws sts get-caller-identity
 aws sso login --profile <profile-name>
 
 # kubeconfig 재생성
-aws eks update-kubeconfig --region ap-northeast-2 --name ticket-hs-cluster --alias seoul
+aws eks update-kubeconfig --region ap-northeast-2 --name ddcn41-eks-cluster --alias seoul
 
 # IAM 권한 확인 (aws-auth ConfigMap)
 kubectl -n kube-system get configmap aws-auth -o yaml
@@ -167,7 +167,7 @@ kubectl get events --field-selector involvedObject.kind=Node
 kubectl -n kube-system get pods -l k8s-app=aws-node
 
 # Node group 스케일링 확인
-aws eks describe-nodegroup --cluster-name ticket-hs-cluster --nodegroup-name <nodegroup-name>
+aws eks describe-nodegroup --cluster-name ddcn41-eks-cluster --nodegroup-name <nodegroup-name>
 ```
 
 </details>
@@ -179,19 +179,19 @@ aws eks describe-nodegroup --cluster-name ticket-hs-cluster --nodegroup-name <no
 ### Phase 1: Velero 설치 (Seoul & Tokyo 동시)
 
 ```bash
-cd eks/dh/ansible
+cd eks/ddcn41/ansible
 make install
 ```
 
 설치 확인:
 ```bash
 # Seoul
-aws eks update-kubeconfig --region ap-northeast-2 --name ticket-hs-cluster
+aws eks update-kubeconfig --region ap-northeast-2 --name ddcn41-eks-cluster
 velero version
 velero backup-location get
 
 # Tokyo
-aws eks update-kubeconfig --region ap-northeast-1 --name ticket-hs-cluster
+aws eks update-kubeconfig --region ap-northeast-1 --name ddcn41-eks-cluster
 velero version
 velero backup-location get
 ```
@@ -210,19 +210,19 @@ Error: INSTALLATION FAILED: unable to build kubernetes objects from release mani
 **해결**:
 ```bash
 # 현재 리전의 OIDC Provider 확인
-aws eks describe-cluster --name ticket-hs-cluster \
+aws eks describe-cluster --name ddcn41-eks-cluster \
   --query "cluster.identity.oidc.issuer" --output text
 
 # IAM OIDC Provider 존재 확인
 aws iam list-open-id-connect-providers | grep $(aws eks describe-cluster \
-  --name ticket-hs-cluster --query "cluster.identity.oidc.issuer" \
+  --name ddcn41-eks-cluster --query "cluster.identity.oidc.issuer" \
   --output text | sed 's/https:\/\///')
 
 # Velero IAM Role 확인 (글로벌 리소스 - Seoul에서 생성)
-aws iam get-role --role-name ticket-hs-velero-irsa-prod
+aws iam get-role --role-name ddcn41-eks-velero-irsa-prod
 
 # IAM Role Trust Policy에 양쪽 OIDC Provider가 있는지 확인
-aws iam get-role --role-name ticket-hs-velero-irsa-prod \
+aws iam get-role --role-name ddcn41-eks-velero-irsa-prod \
   --query 'Role.AssumeRolePolicyDocument.Statement[].Principal.Federated'
 
 # Terraform에서 OIDC 재생성 (해당 리전)
@@ -243,16 +243,16 @@ default   Unavailable   Unknown          5m
 kubectl -n velero logs deployment/velero -c velero
 
 # S3 버킷 존재 확인
-aws s3 ls s3://ticket-hs-velero-prod-ap-northeast-2/
+aws s3 ls s3://ddcn41-eks-velero-prod-ap-northeast-2/
 
 # IRSA ServiceAccount 확인
 kubectl -n velero get sa velero -o yaml | grep eks.amazonaws.com
 
 # IAM Role 정책 확인
-aws iam list-attached-role-policies --role-name ticket-hs-velero-irsa-prod
+aws iam list-attached-role-policies --role-name ddcn41-eks-velero-irsa-prod
 
 # KMS 키 접근 테스트
-aws kms describe-key --key-id alias/ticket-hs-velero-prod
+aws kms describe-key --key-id alias/ddcn41-eks-velero-prod
 ```
 
 #### ❌ Velero Pod CrashLoopBackOff
@@ -305,7 +305,7 @@ kubectl -n velero logs deployment/velero -c velero-plugin-for-aws
 
 ```bash
 # Seoul 클러스터로 전환
-aws eks update-kubeconfig --region ap-northeast-2 --name ticket-hs-cluster
+aws eks update-kubeconfig --region ap-northeast-2 --name ddcn41-eks-cluster
 
 # 테스트 네임스페이스 생성
 kubectl create namespace test-app
@@ -316,8 +316,8 @@ kubectl -n test-app expose deployment nginx --port=80
 
 # ConfigMap 생성 (PHZ DNS 사용)
 kubectl -n test-app create configmap app-config \
-  --from-literal=DATABASE_HOST=db.ticket-hs.internal \
-  --from-literal=REDIS_HOST=redis.ticket-hs.internal
+  --from-literal=DATABASE_HOST=db.ddcn41.internal \
+  --from-literal=REDIS_HOST=redis.ddcn41.internal
 
 # 배포 확인
 kubectl -n test-app get all
@@ -368,7 +368,7 @@ kubectl describe nodes | grep -A 5 "Allocated resources"
 
 # Node group 스케일 업
 aws eks update-nodegroup-config \
-  --cluster-name ticket-hs-cluster \
+  --cluster-name ddcn41-eks-cluster \
   --nodegroup-name <nodegroup-name> \
   --scaling-config desiredSize=3,minSize=2,maxSize=5
 ```
@@ -401,7 +401,7 @@ kubectl -n test-app describe pod -l app=nginx | grep -A 5 Readiness
 
 #### ❌ PHZ DNS 해석 실패
 ```bash
-$ kubectl -n test-app exec -it nginx-xxx -- nslookup db.ticket-hs.internal
+$ kubectl -n test-app exec -it nginx-xxx -- nslookup db.ddcn41.internal
 ;; connection timed out; no servers could be reached
 ```
 **원인**: VPC DNS 설정 문제 또는 PHZ가 VPC에 연결되지 않음
@@ -409,7 +409,7 @@ $ kubectl -n test-app exec -it nginx-xxx -- nslookup db.ticket-hs.internal
 **해결**:
 ```bash
 # VPC DNS 설정 확인
-VPC_ID=$(aws eks describe-cluster --name ticket-hs-cluster \
+VPC_ID=$(aws eks describe-cluster --name ddcn41-eks-cluster \
   --query "cluster.resourcesVpcConfig.vpcId" --output text)
 
 aws ec2 describe-vpc-attribute --vpc-id $VPC_ID --attribute enableDnsSupport
@@ -431,19 +431,35 @@ kubectl -n kube-system logs -l k8s-app=kube-dns
 ### Phase 3: 백업 생성 (Seoul)
 
 ```bash
-cd eks/dh/ansible
+cd eks/ddcn41/ansible
 
-# 백업 생성
-make seoul-backup NAME=migration-test
+# Seoul 클러스터로 전환
+aws eks update-kubeconfig --region ap-northeast-2 --name ddcn41-eks-cluster
 
-# 또는 특정 네임스페이스만
-velero backup create migration-test \
-  --include-namespaces test-app \
+# 전체 클러스터 백업
+make seoul-backup-full NAME=full-backup
+
+# 또는 특정 네임스페이스만 백업
+make seoul-backup NS=ticketing NAME=ticketing-dr-backup
+
+# Makefile 없이 직접 실행 시
+velero backup create ticketing-dr-backup \
+  --include-namespaces ticketing \
   --wait
 
 # 백업 상태 확인
-velero backup describe migration-test
-velero backup logs migration-test
+velero backup describe ticketing-dr-backup
+velero backup logs ticketing-dr-backup
+```
+
+**예시 출력:**
+```
+Name:         ticketing-dr-backup
+Namespace:    velero
+Phase:        Completed
+Items backed up: 98
+Started:    2025-11-25 21:35:21 +0900 KST
+Completed:  2025-11-25 21:35:38 +0900 KST
 ```
 
 <details>
@@ -493,10 +509,10 @@ kubectl -n velero exec deployment/velero -- \
 
 # S3 직접 접근 테스트 (Velero Pod 내에서)
 kubectl -n velero exec deployment/velero -- \
-  aws s3 ls s3://ticket-hs-velero-prod-ap-northeast-2/
+  aws s3 ls s3://ddcn41-eks-velero-prod-ap-northeast-2/
 
 # IAM 정책 확인
-aws iam get-role-policy --role-name ticket-hs-velero-irsa-prod \
+aws iam get-role-policy --role-name ddcn41-eks-velero-irsa-prod \
   --policy-name velero-s3-policy
 ```
 
@@ -554,12 +570,12 @@ velero backup create migration-test-nosnapshot \
 
 ```bash
 # S3 복제 상태 확인 (약 1-5분 소요)
-aws s3 ls s3://ticket-hs-velero-prod-ap-northeast-2/backups/
-aws s3 ls s3://ticket-hs-velero-prod-ap-northeast-1/backups/
+aws s3 ls s3://ddcn41-eks-velero-prod-ap-northeast-2/backups/
+aws s3 ls s3://ddcn41-eks-velero-prod-ap-northeast-1/backups/
 
 # 백업 파일 비교
-aws s3 ls s3://ticket-hs-velero-prod-ap-northeast-2/backups/migration-test/ --recursive
-aws s3 ls s3://ticket-hs-velero-prod-ap-northeast-1/backups/migration-test/ --recursive
+aws s3 ls s3://ddcn41-eks-velero-prod-ap-northeast-2/backups/migration-test/ --recursive
+aws s3 ls s3://ddcn41-eks-velero-prod-ap-northeast-1/backups/migration-test/ --recursive
 ```
 
 <details>
@@ -568,7 +584,7 @@ aws s3 ls s3://ticket-hs-velero-prod-ap-northeast-1/backups/migration-test/ --re
 #### ❌ 복제가 시작되지 않음
 ```bash
 # Seoul 버킷에는 있지만 Tokyo 버킷에 없음
-$ aws s3 ls s3://ticket-hs-velero-prod-ap-northeast-1/backups/migration-test/
+$ aws s3 ls s3://ddcn41-eks-velero-prod-ap-northeast-1/backups/migration-test/
 # (아무것도 출력 안됨)
 ```
 **원인**: S3 복제 규칙 미설정 또는 버전 관리 비활성화
@@ -577,16 +593,16 @@ $ aws s3 ls s3://ticket-hs-velero-prod-ap-northeast-1/backups/migration-test/
 ```bash
 # 복제 규칙 확인
 aws s3api get-bucket-replication \
-  --bucket ticket-hs-velero-prod-ap-northeast-2
+  --bucket ddcn41-eks-velero-prod-ap-northeast-2
 
 # 버전 관리 상태 확인 (복제에 필수)
 aws s3api get-bucket-versioning \
-  --bucket ticket-hs-velero-prod-ap-northeast-2
+  --bucket ddcn41-eks-velero-prod-ap-northeast-2
 aws s3api get-bucket-versioning \
-  --bucket ticket-hs-velero-prod-ap-northeast-1
+  --bucket ddcn41-eks-velero-prod-ap-northeast-1
 
 # 복제 IAM Role 확인
-aws iam get-role --role-name ticket-hs-velero-replication-role
+aws iam get-role --role-name ddcn41-eks-velero-replication-role
 
 # Terraform에서 복제 재설정
 cd infrastructure/environments/seoul
@@ -602,7 +618,7 @@ terraform apply -target=module.velero
 aws cloudwatch get-metric-statistics \
   --namespace AWS/S3 \
   --metric-name ReplicationLatency \
-  --dimensions Name=SourceBucket,Value=ticket-hs-velero-prod-ap-northeast-2 \
+  --dimensions Name=SourceBucket,Value=ddcn41-eks-velero-prod-ap-northeast-2 \
   --start-time $(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ) \
   --end-time $(date -u +%Y-%m-%dT%H:%M:%SZ) \
   --period 300 \
@@ -610,14 +626,14 @@ aws cloudwatch get-metric-statistics \
 
 # 개별 객체 복제 상태 확인
 aws s3api head-object \
-  --bucket ticket-hs-velero-prod-ap-northeast-2 \
+  --bucket ddcn41-eks-velero-prod-ap-northeast-2 \
   --key backups/migration-test/velero-backup.json \
   --query 'ReplicationStatus'
 
 # 긴급 시 수동 복사
 aws s3 sync \
-  s3://ticket-hs-velero-prod-ap-northeast-2/backups/migration-test/ \
-  s3://ticket-hs-velero-prod-ap-northeast-1/backups/migration-test/ \
+  s3://ddcn41-eks-velero-prod-ap-northeast-2/backups/migration-test/ \
+  s3://ddcn41-eks-velero-prod-ap-northeast-1/backups/migration-test/ \
   --source-region ap-northeast-2 \
   --region ap-northeast-1
 ```
@@ -632,16 +648,16 @@ ReplicationStatus: FAILED
 ```bash
 # 소스 버킷 암호화 설정 확인
 aws s3api get-bucket-encryption \
-  --bucket ticket-hs-velero-prod-ap-northeast-2
+  --bucket ddcn41-eks-velero-prod-ap-northeast-2
 
 # 대상 리전 KMS 키 확인
 aws kms describe-key \
-  --key-id alias/ticket-hs-velero-prod \
+  --key-id alias/ddcn41-eks-velero-prod \
   --region ap-northeast-1
 
 # 복제 역할의 KMS 권한 확인
 aws iam get-role-policy \
-  --role-name ticket-hs-velero-replication-role \
+  --role-name ddcn41-eks-velero-replication-role \
   --policy-name ticket-hs-velero-replication-policy
 ```
 
@@ -652,19 +668,19 @@ aws iam get-role-policy \
 ```bash
 # 복제 규칙 필터 확인
 aws s3api get-bucket-replication \
-  --bucket ticket-hs-velero-prod-ap-northeast-2 \
+  --bucket ddcn41-eks-velero-prod-ap-northeast-2 \
   --query 'ReplicationConfiguration.Rules[].Filter'
 
 # 소스와 대상 파일 수 비교
 echo "Source:"
-aws s3 ls s3://ticket-hs-velero-prod-ap-northeast-2/backups/migration-test/ --recursive | wc -l
+aws s3 ls s3://ddcn41-eks-velero-prod-ap-northeast-2/backups/migration-test/ --recursive | wc -l
 
 echo "Destination:"
-aws s3 ls s3://ticket-hs-velero-prod-ap-northeast-1/backups/migration-test/ --recursive | wc -l
+aws s3 ls s3://ddcn41-eks-velero-prod-ap-northeast-1/backups/migration-test/ --recursive | wc -l
 
 # 누락된 파일 확인
-diff <(aws s3 ls s3://ticket-hs-velero-prod-ap-northeast-2/backups/migration-test/ --recursive | awk '{print $4}' | sort) \
-     <(aws s3 ls s3://ticket-hs-velero-prod-ap-northeast-1/backups/migration-test/ --recursive | awk '{print $4}' | sort)
+diff <(aws s3 ls s3://ddcn41-eks-velero-prod-ap-northeast-2/backups/migration-test/ --recursive | awk '{print $4}' | sort) \
+     <(aws s3 ls s3://ddcn41-eks-velero-prod-ap-northeast-1/backups/migration-test/ --recursive | awk '{print $4}' | sort)
 ```
 
 </details>
@@ -675,22 +691,53 @@ diff <(aws s3 ls s3://ticket-hs-velero-prod-ap-northeast-2/backups/migration-tes
 
 ```bash
 # Tokyo 클러스터로 전환
-aws eks update-kubeconfig --region ap-northeast-1 --name ticket-hs-cluster
+aws eks update-kubeconfig --region ap-northeast-1 --name ddcn41-eks-cluster
+
+# BackupStorageLocation 상태 확인 (Available 이어야 함)
+velero backup-location get
 
 # 백업 목록 확인 (복제된 백업이 보여야 함)
 velero backup get
 
-# 복구 실행
-make tokyo-restore BACKUP=migration-test
+# 복구 실행 (PHZ DNS 업데이트 포함)
+make tokyo-restore-full BACKUP=ticketing-dr-backup
 
-# 또는 직접 실행
-velero restore create migration-test-restore \
-  --from-backup migration-test \
+# 또는 복구만 실행 (PHZ 업데이트 없이)
+make tokyo-restore BACKUP=ticketing-dr-backup
+
+# Makefile 없이 직접 실행 시
+velero restore create ticketing-dr-restore \
+  --from-backup ticketing-dr-backup \
   --wait
 
 # 복구 상태 확인
-velero restore describe migration-test-restore
-velero restore logs migration-test-restore
+velero restore describe ticketing-dr-restore
+velero restore logs ticketing-dr-restore
+```
+
+**중요: IRSA 권한 확인**
+Tokyo BSL이 "Unavailable" 상태라면 IAM Role Trust Policy에 Tokyo OIDC Provider가 없는 것입니다.
+
+```bash
+# Tokyo Velero 로그에서 IRSA 오류 확인
+kubectl -n velero logs deployment/velero | grep -i "error\|denied"
+
+# 해결: Seoul terraform에서 tokyo_cluster_exists 변수 활성화
+cd infrastructure/environments/seoul
+terraform apply -var="tokyo_cluster_exists=true"
+
+# Velero 재시작
+kubectl -n velero rollout restart deployment velero
+```
+
+**예시 출력:**
+```
+Name:         ticketing-dr-restore
+Phase:        Completed
+Total items to be restored:  24
+Items restored:              24
+Started:    2025-11-25 21:44:11 +0900 KST
+Completed:  2025-11-25 21:44:14 +0900 KST
 ```
 
 <details>
@@ -855,7 +902,7 @@ kubectl -n test-app get pods
 
 # ConfigMap의 PHZ DNS 확인
 kubectl -n test-app get configmap app-config -o jsonpath='{.data.DATABASE_HOST}'
-# 출력: db.ticket-hs.internal
+# 출력: db.ddcn41.internal
 ```
 
 <details>
@@ -880,8 +927,8 @@ kubectl -n test-app exec nginx-xxx-xxx -- env | sort
 kubectl -n test-app get configmap,secret
 
 # 의존 서비스 연결 테스트
-kubectl -n test-app exec nginx-xxx-xxx -- nslookup db.ticket-hs.internal
-kubectl -n test-app exec nginx-xxx-xxx -- nc -zv db.ticket-hs.internal 5432
+kubectl -n test-app exec nginx-xxx-xxx -- nslookup db.ddcn41.internal
+kubectl -n test-app exec nginx-xxx-xxx -- nc -zv db.ddcn41.internal 5432
 ```
 
 #### ❌ Service LoadBalancer Pending
@@ -906,7 +953,7 @@ aws ec2 describe-subnets --filters "Name=vpc-id,Values=<vpc-id>" \
 
 #### ❌ 데이터베이스 연결 실패
 ```
-Error: connection refused to db.ticket-hs.internal:5432
+Error: connection refused to db.ddcn41.internal:5432
 ```
 **원인**: RDS 보안 그룹 규칙 누락 또는 PHZ 설정 오류
 
@@ -915,11 +962,11 @@ Error: connection refused to db.ticket-hs.internal:5432
 # PHZ 레코드 확인
 aws route53 list-resource-record-sets \
   --hosted-zone-id $(terraform output -raw phz_zone_id) \
-  --query "ResourceRecordSets[?Name=='db.ticket-hs.internal.']"
+  --query "ResourceRecordSets[?Name=='db.ddcn41.internal.']"
 
 # RDS 보안 그룹 확인
 RDS_SG=$(aws rds describe-db-instances \
-  --db-instance-identifier ticket-hs-db \
+  --db-instance-identifier ddcn41-db \
   --query 'DBInstances[0].VpcSecurityGroups[0].VpcSecurityGroupId' \
   --output text --region ap-northeast-1)
 
@@ -927,7 +974,7 @@ aws ec2 describe-security-groups --group-ids $RDS_SG \
   --query 'SecurityGroups[0].IpPermissions'
 
 # EKS 노드 보안 그룹에서 RDS 접근 허용 확인
-EKS_SG=$(aws eks describe-cluster --name ticket-hs-cluster \
+EKS_SG=$(aws eks describe-cluster --name ddcn41-eks-cluster \
   --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' \
   --output text --region ap-northeast-1)
 ```
@@ -958,7 +1005,7 @@ diff seoul-resources.yaml tokyo-resources.yaml
 ### Phase 7: PHZ DNS 상태 확인
 
 ```bash
-cd eks/dh/ansible
+cd eks/ddcn41/ansible
 
 # 현재 PHZ 레코드 확인
 make phz-verify
@@ -969,7 +1016,7 @@ aws route53 list-resource-record-sets --hosted-zone-id $PHZ_ZONE_ID
 ```
 
 **PHZ 아키텍처:**
-- **단일 Zone**: Seoul에서 `ticket-hs.internal` PHZ 생성
+- **단일 Zone**: Seoul에서 `ddcn41.internal` PHZ 생성
 - **VPC 연결**: Seoul VPC와 Tokyo VPC 모두 동일 PHZ에 연결
 - **DNS 레코드**: 현재 활성 리전의 RDS/Redis endpoint를 가리킴
 
@@ -977,7 +1024,7 @@ aws route53 list-resource-record-sets --hosted-zone-id $PHZ_ZONE_ID
 - `make phz-tokyo`: DNS 레코드를 Tokyo RDS/Redis로 업데이트
 - `make phz-seoul`: DNS 레코드를 Seoul RDS/Redis로 롤백
 
-앱은 `db.ticket-hs.internal`, `redis.ticket-hs.internal` 사용 → DNS 레코드 변경만으로 리전 전환 완료
+앱은 `db.ddcn41.internal`, `redis.ddcn41.internal` 사용 → DNS 레코드 변경만으로 리전 전환 완료
 
 <details>
 <summary>🔧 Phase 7 트러블슈팅: PHZ</summary>
@@ -997,13 +1044,13 @@ terraform -chdir=infrastructure/environments/seoul state list | grep phz
 
 # PHZ 직접 검색
 aws route53 list-hosted-zones-by-name \
-  --dns-name ticket-hs.internal \
+  --dns-name ddcn41.internal \
   --query 'HostedZones[?Config.PrivateZone==`true`]'
 ```
 
 #### ❌ PHZ 레코드가 잘못된 endpoint를 가리킴
 ```
-db.ticket-hs.internal -> seoul-rds.xxx.ap-northeast-2.rds.amazonaws.com (Tokyo에서 복구 후)
+db.ddcn41.internal -> seoul-rds.xxx.ap-northeast-2.rds.amazonaws.com (Tokyo에서 복구 후)
 ```
 **원인**: PHZ 업데이트 미실행 (DR failover 시 PHZ 업데이트 필수)
 
@@ -1036,7 +1083,7 @@ make phz-tokyo-auto
 # TTL 확인
 aws route53 list-resource-record-sets \
   --hosted-zone-id $PHZ_ZONE_ID \
-  --query "ResourceRecordSets[?Name=='db.ticket-hs.internal.'].TTL"
+  --query "ResourceRecordSets[?Name=='db.ddcn41.internal.'].TTL"
 
 # Pod 재시작으로 DNS 캐시 초기화
 kubectl -n test-app rollout restart deployment nginx
@@ -1045,7 +1092,7 @@ kubectl -n test-app rollout restart deployment nginx
 kubectl -n kube-system rollout restart deployment coredns
 
 # 또는 새 Pod로 테스트
-kubectl run dns-test --rm -it --image=busybox -- nslookup db.ticket-hs.internal
+kubectl run dns-test --rm -it --image=busybox -- nslookup db.ddcn41.internal
 ```
 
 #### ❌ 여러 VPC에서 동일 PHZ 접근 필요
@@ -1071,7 +1118,7 @@ aws route53 get-hosted-zone --id $PHZ_ZONE_ID \
 
 자동화된 전체 DR 테스트:
 ```bash
-cd eks/dh/ansible
+cd eks/ddcn41/ansible
 make dr-test
 ```
 
@@ -1125,11 +1172,11 @@ velero backup delete dr-test-* --confirm
 ### 테스트 앱 정리
 ```bash
 # Seoul
-aws eks update-kubeconfig --region ap-northeast-2 --name ticket-hs-cluster
+aws eks update-kubeconfig --region ap-northeast-2 --name ddcn41-eks-cluster
 kubectl delete namespace test-app
 
 # Tokyo
-aws eks update-kubeconfig --region ap-northeast-1 --name ticket-hs-cluster
+aws eks update-kubeconfig --region ap-northeast-1 --name ddcn41-eks-cluster
 kubectl delete namespace test-app
 ```
 
@@ -1140,7 +1187,7 @@ velero backup delete migration-test --confirm
 
 ### Velero 완전 삭제
 ```bash
-cd eks/dh/ansible
+cd eks/ddcn41/ansible
 make uninstall
 ```
 
@@ -1151,14 +1198,38 @@ make uninstall
 | 작업 | 명령어 |
 |------|--------|
 | Velero 동시 설치 | `make install` |
-| Seoul 백업 | `make seoul-backup NAME=xxx` |
+| 전체 클러스터 백업 | `make seoul-backup-full NAME=xxx` |
+| 특정 네임스페이스 백업 | `make seoul-backup NS=ticketing NAME=xxx` |
+| Seoul 백업 (기본) | `make seoul-backup NAME=xxx` |
 | Tokyo 복구 | `make tokyo-restore BACKUP=xxx` |
+| Tokyo 복구 + PHZ 업데이트 | `make tokyo-restore-full BACKUP=xxx` |
 | DR Failover | `make dr-failover BACKUP=xxx` |
 | PHZ 확인 | `make phz-verify` |
 | PHZ Tokyo 전환 | `make phz-tokyo` |
 | PHZ Seoul 롤백 | `make phz-seoul` |
 | 전체 DR 테스트 | `make dr-test` |
 | Velero 삭제 | `make uninstall` |
+
+### 실제 DR 복구 시나리오 예시
+
+```bash
+# 1. Seoul에서 ticketing 네임스페이스 백업
+aws eks update-kubeconfig --region ap-northeast-2 --name ddcn41-eks-cluster
+velero backup create ticketing-dr-backup --include-namespaces ticketing --wait
+
+# 2. S3 복제 확인 (거의 즉시)
+aws s3 ls s3://ddcn41-eks-velero-prod-ap-northeast-1/backups/ticketing-dr-backup/
+
+# 3. Tokyo에서 복구
+aws eks update-kubeconfig --region ap-northeast-1 --name ddcn41-eks-cluster
+velero restore create ticketing-dr-restore --from-backup ticketing-dr-backup --wait
+
+# 4. 복구 확인
+kubectl get all -n ticketing
+
+# 5. PHZ DNS를 Tokyo로 전환 (DB/Redis 연결용)
+make phz-tokyo-auto
+```
 
 ---
 
@@ -1168,7 +1239,7 @@ make uninstall
 
 1. **Tokyo 클러스터 확인**
    ```bash
-   aws eks update-kubeconfig --region ap-northeast-1 --name ticket-hs-cluster
+   aws eks update-kubeconfig --region ap-northeast-1 --name ddcn41-eks-cluster
    kubectl get nodes
    ```
 

@@ -27,13 +27,13 @@
     skip_phz_update: false
 
     # PHZ 설정 (Terraform output에서 가져오거나 직접 설정)
-    phz_domain: "ticket-hs.internal"
+    phz_domain: "ddcn41.internal"
     dns_ttl: 300
     dns_propagation_wait: 30
 
     # Tokyo 클러스터 정보
     tokyo_region: ap-northeast-1
-    tokyo_cluster_name: ticket-hs-cluster
+    tokyo_cluster_name: ddcn41-eks-cluster
 
   pre_tasks:
     - name: Validate backup_name is provided
@@ -137,7 +137,7 @@
           ║               DR FAILOVER COMPLETED                            ║
           ╠════════════════════════════════════════════════════════════════╣
           ║  Status: SUCCESS                                               ║
-          ║  Target Cluster: ticket-hs-cluster (Tokyo)                     ║
+          ║  Target Cluster: ddcn41-eks-cluster (Tokyo)                     ║
           ║  Restored From: {{ backup_name }}
           ║  PHZ Updated: {{ not skip_phz_update }}
           ╚════════════════════════════════════════════════════════════════╝

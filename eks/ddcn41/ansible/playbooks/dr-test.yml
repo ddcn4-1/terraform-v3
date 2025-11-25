@@ -30,7 +30,7 @@
 
     - name: Switch to Seoul cluster
       ansible.builtin.command:
-        cmd: "aws eks update-kubeconfig --region ap-northeast-2 --name ticket-hs-cluster"
+        cmd: "aws eks update-kubeconfig --region ap-northeast-2 --name ddcn41-eks-cluster"
       changed_when: true
 
     - name: Create test namespace
@@ -139,7 +139,7 @@
 
     - name: Switch to Tokyo cluster
       ansible.builtin.command:
-        cmd: "aws eks update-kubeconfig --region ap-northeast-1 --name ticket-hs-cluster"
+        cmd: "aws eks update-kubeconfig --region ap-northeast-1 --name ddcn41-eks-cluster"
       changed_when: true
 
     - name: Wait for backup to be available in Tokyo
@@ -213,7 +213,7 @@
 
         - name: Switch back to Seoul
           ansible.builtin.command:
-            cmd: "aws eks update-kubeconfig --region ap-northeast-2 --name ticket-hs-cluster"
+            cmd: "aws eks update-kubeconfig --region ap-northeast-2 --name ddcn41-eks-cluster"
           changed_when: true
 
         - name: Delete test namespace from Seoul

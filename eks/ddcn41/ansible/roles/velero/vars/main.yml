@@ -2,7 +2,7 @@
 # 이 값들은 inventory 또는 playbook에서 override 가능
 
 # Project specific
-project_name: "ticket-hs"
+project_name: "ddcn41-eks"
 environment: "prod"
 
 # Seoul (Primary)

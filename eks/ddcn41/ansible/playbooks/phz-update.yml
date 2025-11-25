@@ -20,7 +20,7 @@
   gather_facts: true
 
   vars:
-    phz_domain: "ticket-hs.internal"
+    phz_domain: "ddcn41.internal"
     dns_ttl: 300
     dns_propagation_wait: 30
 
