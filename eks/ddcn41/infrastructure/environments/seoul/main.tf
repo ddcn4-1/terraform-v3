@@ -106,17 +106,11 @@ module "vpc" {
 }
 
 # ============================================================================
-# ALB Module
+# ALB Module - REMOVED (using NGINX Ingress Controller with NLB instead)
 # ============================================================================
-module "alb" {
-  source = "../../modules/alb"
-
-  project_name           = var.project_name
-  environment            = var.environment
-  vpc_id                 = module.vpc.vpc_id
-  public_subnet_ids      = module.vpc.public_subnet_ids
-  alb_security_group_id  = module.vpc.alb_security_group_id
-}
+# ALB는 더 이상 Terraform으로 관리하지 않음
+# NGINX Ingress Controller가 NLB를 자동 생성하여 트래픽 처리
+# 기존 ALB 삭제: terraform apply 후 AWS 콘솔에서 확인
 
 # ============================================================================
 # EKS Module
