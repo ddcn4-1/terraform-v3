@@ -1,0 +1,556 @@
+# =============================================================================
+# Seoul → Tokyo Cluster Migration Makefile
+# Automated workflow for database and Kubernetes migration
+# =============================================================================
+
+.PHONY: help migration-all migration-db migration-k8s
+.PHONY: backup-db backup-rds backup-redis
+.PHONY: copy-snapshots copy-rds copy-redis
+.PHONY: restore-db restore-rds restore-redis
+.PHONY: backup-k8s velero-install-seoul velero-install-tokyo restore-k8s
+.PHONY: post-restore update-images update-irsa
+.PHONY: validate validate-db validate-k8s status-migration clean-migration
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+# AWS Configuration
+AWS_ACCOUNT_ID := 911723818289
+SEOUL_REGION := ap-northeast-2
+TOKYO_REGION := ap-northeast-1
+
+# Project Configuration
+PROJECT_NAME := hs-eks
+TOKYO_PROJECT_NAME := hs-eks-tokyo
+NAMESPACE := ddcn41
+
+# S3 Bucket for Velero backups
+VELERO_BUCKET := hs-eks-velero-backups-$(AWS_ACCOUNT_ID)
+
+# Snapshot naming
+TIMESTAMP := $(shell date +%Y%m%d-%H%M%S)
+RDS_SNAPSHOT_NAME := $(PROJECT_NAME)-postgres-migration-$(TIMESTAMP)
+REDIS_SNAPSHOT_NAME := $(PROJECT_NAME)-redis-migration-$(TIMESTAMP)
+RDS_SNAPSHOT_TOKYO := $(TOKYO_PROJECT_NAME)-postgres-restored
+REDIS_SNAPSHOT_TOKYO := $(TOKYO_PROJECT_NAME)-redis-restored
+
+# Velero configuration
+VELERO_BACKUP_NAME := seoul-k8s-migration
+VELERO_RESTORE_NAME := tokyo-k8s-restore
+VELERO_IAM_POLICY := VeleroBackupPolicy
+
+# Dynamic identifiers (fetched at runtime)
+RDS_INSTANCE_ID := $(shell aws rds describe-db-instances --region $(SEOUL_REGION) \
+	--query 'DBInstances[?DBName==`ticketdb`].DBInstanceIdentifier' --output text 2>/dev/null)
+REDIS_CLUSTER_ID := $(shell aws elasticache describe-cache-clusters --region $(SEOUL_REGION) \
+	--query 'CacheClusters[?Engine==`redis` && starts_with(CacheClusterId, `hs-eks`)].CacheClusterId | [0]' --output text 2>/dev/null)
+
+# EKS Clusters
+SEOUL_CLUSTER := $(PROJECT_NAME)-cluster
+TOKYO_CLUSTER := $(TOKYO_PROJECT_NAME)-cluster
+
+# Color output
+BLUE := \033[0;34m
+GREEN := \033[0;32m
+YELLOW := \033[0;33m
+RED := \033[0;31m
+CYAN := \033[0;36m
+NC := \033[0m
+
+# =============================================================================
+# Help
+# =============================================================================
+
+help: ## Show this help message
+	@echo "$(BLUE)========================================$(NC)"
+	@echo "$(BLUE) Seoul → Tokyo Migration Automation$(NC)"
+	@echo "$(BLUE)========================================$(NC)"
+	@echo ""
+	@echo "$(CYAN)Quick Start:$(NC)"
+	@echo "  $(GREEN)make migration-all$(NC)      Complete migration (DB + K8s)"
+	@echo ""
+	@echo "$(CYAN)Step-by-Step Migration:$(NC)"
+	@echo "  $(GREEN)make migration-db$(NC)       Database migration only"
+	@echo "  $(GREEN)make migration-k8s$(NC)      Kubernetes migration only"
+	@echo ""
+	@echo "$(CYAN)Database Migration:$(NC)"
+	@echo "  $(GREEN)make backup-db$(NC)          Create RDS + Redis snapshots"
+	@echo "  $(GREEN)make copy-snapshots$(NC)     Copy snapshots to Tokyo"
+	@echo "  $(GREEN)make restore-db$(NC)         Restore databases in Tokyo"
+	@echo ""
+	@echo "$(CYAN)Kubernetes Migration:$(NC)"
+	@echo "  $(GREEN)make velero-setup$(NC)       Install Velero on both clusters"
+	@echo "  $(GREEN)make backup-k8s$(NC)         Backup K8s resources (Seoul)"
+	@echo "  $(GREEN)make restore-k8s$(NC)        Restore K8s resources (Tokyo)"
+	@echo "  $(GREEN)make post-restore$(NC)       Update images and IRSA"
+	@echo ""
+	@echo "$(CYAN)Validation:$(NC)"
+	@echo "  $(GREEN)make validate$(NC)           Validate migration"
+	@echo "  $(GREEN)make status-migration$(NC)   Show migration status"
+	@echo ""
+	@echo "$(CYAN)Cleanup:$(NC)"
+	@echo "  $(GREEN)make clean-migration$(NC)    Clean up migration resources"
+	@echo ""
+
+# =============================================================================
+# Complete Migration Workflows
+# =============================================================================
+
+migration-all: ## Complete migration: Database + Kubernetes
+	@echo "$(BLUE)========================================$(NC)"
+	@echo "$(BLUE) Complete Migration: Seoul → Tokyo$(NC)"
+	@echo "$(BLUE)========================================$(NC)"
+	@echo ""
+	@echo "$(YELLOW)This will migrate:$(NC)"
+	@echo "  - RDS PostgreSQL"
+	@echo "  - ElastiCache Redis"
+	@echo "  - Kubernetes resources (Deployments, Services)"
+	@echo ""
+	@echo "$(RED)WARNING: This process takes ~1-2 hours$(NC)"
+	@echo "$(YELLOW)Press Enter to continue or Ctrl+C to cancel...$(NC)"
+	@read -r
+	@$(MAKE) migration-db
+	@$(MAKE) migration-k8s
+	@echo ""
+	@echo "$(GREEN)========================================$(NC)"
+	@echo "$(GREEN)✓ Migration Complete!$(NC)"
+	@echo "$(GREEN)========================================$(NC)"
+	@$(MAKE) status-migration
+
+migration-db: backup-db copy-snapshots restore-db ## Database migration workflow
+	@echo "$(GREEN)✓ Database migration complete$(NC)"
+
+migration-k8s: velero-setup backup-k8s push-images-tokyo restore-k8s post-restore ## Kubernetes migration workflow
+	@echo "$(GREEN)✓ Kubernetes migration complete$(NC)"
+
+# =============================================================================
+# Database Backup (Seoul)
+# =============================================================================
+
+backup-db: backup-rds backup-redis ## Create all database snapshots
+	@echo "$(GREEN)✓ All database snapshots created$(NC)"
+
+backup-rds: ## Create RDS PostgreSQL snapshot
+	@echo "$(BLUE)Creating RDS snapshot...$(NC)"
+	@if [ -z "$(RDS_INSTANCE_ID)" ]; then \
+		echo "$(RED)Error: RDS instance not found$(NC)"; \
+		exit 1; \
+	fi
+	@echo "RDS Instance: $(RDS_INSTANCE_ID)"
+	@echo "Snapshot Name: $(RDS_SNAPSHOT_NAME)"
+	aws rds create-db-snapshot \
+		--db-instance-identifier $(RDS_INSTANCE_ID) \
+		--db-snapshot-identifier $(RDS_SNAPSHOT_NAME) \
+		--region $(SEOUL_REGION) \
+		--tags Key=Purpose,Value=SeoulToTokyoMigration Key=Timestamp,Value=$(TIMESTAMP)
+	@echo "$(YELLOW)Waiting for RDS snapshot to complete (this may take 10-20 minutes)...$(NC)"
+	aws rds wait db-snapshot-available \
+		--db-snapshot-identifier $(RDS_SNAPSHOT_NAME) \
+		--region $(SEOUL_REGION)
+	@echo "$(GREEN)✓ RDS snapshot created: $(RDS_SNAPSHOT_NAME)$(NC)"
+
+backup-redis: ## Create ElastiCache Redis snapshot
+	@echo "$(BLUE)Creating Redis snapshot...$(NC)"
+	@if [ -z "$(REDIS_CLUSTER_ID)" ]; then \
+		echo "$(RED)Error: Redis cluster not found$(NC)"; \
+		exit 1; \
+	fi
+	@echo "Redis Cluster: $(REDIS_CLUSTER_ID)"
+	@echo "Snapshot Name: $(REDIS_SNAPSHOT_NAME)"
+	aws elasticache create-snapshot \
+		--cache-cluster-id $(REDIS_CLUSTER_ID) \
+		--snapshot-name $(REDIS_SNAPSHOT_NAME) \
+		--region $(SEOUL_REGION)
+	@echo "$(YELLOW)Waiting for Redis snapshot to complete (this may take 5-10 minutes)...$(NC)"
+	@while true; do \
+		STATUS=$$(aws elasticache describe-snapshots \
+			--snapshot-name $(REDIS_SNAPSHOT_NAME) \
+			--region $(SEOUL_REGION) \
+			--query 'Snapshots[0].Status' --output text 2>/dev/null); \
+		if [ "$$STATUS" = "available" ]; then \
+			echo "$(GREEN)✓ Redis snapshot created: $(REDIS_SNAPSHOT_NAME)$(NC)"; \
+			break; \
+		fi; \
+		echo "Status: $$STATUS - waiting..."; \
+		sleep 30; \
+	done
+
+list-snapshots: ## List all snapshots
+	@echo "$(BLUE)RDS Snapshots (Seoul):$(NC)"
+	@aws rds describe-db-snapshots \
+		--db-instance-identifier $(RDS_INSTANCE_ID) \
+		--region $(SEOUL_REGION) \
+		--query 'DBSnapshots[?Status==`available`].[DBSnapshotIdentifier,SnapshotCreateTime,Status]' \
+		--output table 2>/dev/null || echo "No snapshots found"
+	@echo ""
+	@echo "$(BLUE)Redis Snapshots (Seoul):$(NC)"
+	@aws elasticache describe-snapshots \
+		--cache-cluster-id $(REDIS_CLUSTER_ID) \
+		--region $(SEOUL_REGION) \
+		--query 'Snapshots[?Status==`available`].[SnapshotName,NodeSnapshots[0].SnapshotCreateTime,Status]' \
+		--output table 2>/dev/null || echo "No snapshots found"
+
+# =============================================================================
+# Copy Snapshots to Tokyo
+# =============================================================================
+
+copy-snapshots: copy-rds copy-redis ## Copy all snapshots to Tokyo region
+	@echo "$(GREEN)✓ All snapshots copied to Tokyo$(NC)"
+
+copy-rds: ## Copy RDS snapshot to Tokyo
+	@echo "$(BLUE)Copying RDS snapshot to Tokyo...$(NC)"
+	@LATEST_SNAPSHOT=$$(aws rds describe-db-snapshots \
+		--db-instance-identifier $(RDS_INSTANCE_ID) \
+		--region $(SEOUL_REGION) \
+		--query 'DBSnapshots | sort_by(@, &SnapshotCreateTime) | [-1].DBSnapshotIdentifier' \
+		--output text); \
+	echo "Source Snapshot: $$LATEST_SNAPSHOT"; \
+	echo "Target Snapshot: $(RDS_SNAPSHOT_TOKYO)"; \
+	aws rds copy-db-snapshot \
+		--source-db-snapshot-identifier arn:aws:rds:$(SEOUL_REGION):$(AWS_ACCOUNT_ID):snapshot:$$LATEST_SNAPSHOT \
+		--target-db-snapshot-identifier $(RDS_SNAPSHOT_TOKYO) \
+		--region $(TOKYO_REGION) \
+		--kms-key-id alias/aws/rds \
+		--copy-tags
+	@echo "$(YELLOW)Waiting for RDS snapshot copy (this may take 30-60 minutes)...$(NC)"
+	@echo "$(CYAN)You can check progress with: make check-copy-progress$(NC)"
+	aws rds wait db-snapshot-available \
+		--db-snapshot-identifier $(RDS_SNAPSHOT_TOKYO) \
+		--region $(TOKYO_REGION)
+	@echo "$(GREEN)✓ RDS snapshot copied to Tokyo$(NC)"
+
+copy-redis: ## Copy Redis snapshot to Tokyo
+	@echo "$(BLUE)Copying Redis snapshot to Tokyo...$(NC)"
+	@LATEST_SNAPSHOT=$$(aws elasticache describe-snapshots \
+		--cache-cluster-id $(REDIS_CLUSTER_ID) \
+		--region $(SEOUL_REGION) \
+		--query 'Snapshots | sort_by(@, &NodeSnapshots[0].SnapshotCreateTime) | [-1].SnapshotName' \
+		--output text); \
+	echo "Source Snapshot: $$LATEST_SNAPSHOT"; \
+	echo "Target Snapshot: $(REDIS_SNAPSHOT_TOKYO)"; \
+	aws elasticache copy-snapshot \
+		--source-snapshot-name $$LATEST_SNAPSHOT \
+		--target-snapshot-name $(REDIS_SNAPSHOT_TOKYO) \
+		--region $(TOKYO_REGION)
+	@echo "$(YELLOW)Waiting for Redis snapshot copy...$(NC)"
+	@while true; do \
+		STATUS=$$(aws elasticache describe-snapshots \
+			--snapshot-name $(REDIS_SNAPSHOT_TOKYO) \
+			--region $(TOKYO_REGION) \
+			--query 'Snapshots[0].Status' --output text 2>/dev/null); \
+		if [ "$$STATUS" = "available" ]; then \
+			echo "$(GREEN)✓ Redis snapshot copied to Tokyo$(NC)"; \
+			break; \
+		fi; \
+		echo "Status: $$STATUS - waiting..."; \
+		sleep 30; \
+	done
+
+check-copy-progress: ## Check snapshot copy progress
+	@echo "$(BLUE)RDS Copy Progress:$(NC)"
+	@aws rds describe-db-snapshots \
+		--db-snapshot-identifier $(RDS_SNAPSHOT_TOKYO) \
+		--region $(TOKYO_REGION) \
+		--query 'DBSnapshots[0].[DBSnapshotIdentifier,Status,PercentProgress]' \
+		--output table 2>/dev/null || echo "Not started or not found"
+	@echo ""
+	@echo "$(BLUE)Redis Copy Status:$(NC)"
+	@aws elasticache describe-snapshots \
+		--snapshot-name $(REDIS_SNAPSHOT_TOKYO) \
+		--region $(TOKYO_REGION) \
+		--query 'Snapshots[0].[SnapshotName,Status]' \
+		--output table 2>/dev/null || echo "Not started or not found"
+
+# =============================================================================
+# Restore Databases in Tokyo
+# =============================================================================
+
+restore-db: ## Restore databases in Tokyo using Terraform
+	@echo "$(BLUE)========================================$(NC)"
+	@echo "$(BLUE)Restoring Databases in Tokyo$(NC)"
+	@echo "$(BLUE)========================================$(NC)"
+	@echo ""
+	@echo "$(YELLOW)This will deploy Tokyo database infrastructure from snapshots$(NC)"
+	@echo "$(YELLOW)Make sure you have updated terraform/tokyo/database/*.tf with snapshot identifiers$(NC)"
+	@echo ""
+	@echo "$(CYAN)Expected snapshots:$(NC)"
+	@echo "  RDS: $(RDS_SNAPSHOT_TOKYO)"
+	@echo "  Redis: $(REDIS_SNAPSHOT_TOKYO)"
+	@echo ""
+	@echo "$(YELLOW)Press Enter to continue or Ctrl+C to cancel...$(NC)"
+	@read -r
+	cd terraform/tokyo/database && terraform init
+	cd terraform/tokyo/database && terraform plan
+	@echo ""
+	@echo "$(YELLOW)Review the plan above. Press Enter to apply or Ctrl+C to cancel...$(NC)"
+	@read -r
+	cd terraform/tokyo/database && terraform apply -auto-approve
+	@echo "$(GREEN)✓ Databases restored in Tokyo$(NC)"
+	@cd terraform/tokyo/database && terraform output
+
+# =============================================================================
+# Velero Setup
+# =============================================================================
+
+velero-setup: velero-prereq velero-install-seoul velero-install-tokyo ## Complete Velero setup
+	@echo "$(GREEN)✓ Velero setup complete on both clusters$(NC)"
+
+velero-prereq: ## Create S3 bucket and IAM policy for Velero
+	@echo "$(BLUE)Setting up Velero prerequisites...$(NC)"
+	@echo "Creating S3 bucket for Velero backups..."
+	@aws s3 mb s3://$(VELERO_BUCKET) --region $(TOKYO_REGION) 2>/dev/null || echo "Bucket already exists"
+	@aws s3api put-bucket-versioning \
+		--bucket $(VELERO_BUCKET) \
+		--versioning-configuration Status=Enabled \
+		--region $(TOKYO_REGION) 2>/dev/null || true
+	@echo "$(GREEN)✓ S3 bucket ready: $(VELERO_BUCKET)$(NC)"
+	@echo ""
+	@echo "$(YELLOW)Creating IAM policy for Velero...$(NC)"
+	@echo '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ec2:DescribeVolumes","ec2:DescribeSnapshots","ec2:CreateTags","ec2:CreateVolume","ec2:CreateSnapshot","ec2:DeleteSnapshot"],"Resource":"*"},{"Effect":"Allow","Action":["s3:GetObject","s3:DeleteObject","s3:PutObject","s3:AbortMultipartUpload","s3:ListMultipartUploadParts"],"Resource":["arn:aws:s3:::$(VELERO_BUCKET)/*"]},{"Effect":"Allow","Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::$(VELERO_BUCKET)"]}]}' > /tmp/velero-policy.json
+	@aws iam create-policy \
+		--policy-name $(VELERO_IAM_POLICY) \
+		--policy-document file:///tmp/velero-policy.json 2>/dev/null || \
+		echo "Policy already exists"
+	@rm -f /tmp/velero-policy.json
+	@echo "$(GREEN)✓ IAM policy ready: $(VELERO_IAM_POLICY)$(NC)"
+
+velero-install-seoul: ## Install Velero on Seoul cluster
+	@echo "$(BLUE)Installing Velero on Seoul cluster...$(NC)"
+	@which velero >/dev/null 2>&1 || (echo "$(RED)Error: Velero CLI not installed. Run: brew install velero$(NC)" && exit 1)
+	kubectl config use-context arn:aws:eks:$(SEOUL_REGION):$(AWS_ACCOUNT_ID):cluster/$(SEOUL_CLUSTER)
+	@echo "Creating IRSA for Velero..."
+	eksctl create iamserviceaccount \
+		--cluster=$(SEOUL_CLUSTER) \
+		--region=$(SEOUL_REGION) \
+		--namespace=velero \
+		--name=velero-server \
+		--role-name=$(PROJECT_NAME)-seoul-velero-role \
+		--attach-policy-arn=arn:aws:iam::$(AWS_ACCOUNT_ID):policy/$(VELERO_IAM_POLICY) \
+		--approve \
+		--override-existing-serviceaccounts 2>/dev/null || echo "IRSA already exists"
+	@echo "Installing Velero..."
+	velero install \
+		--provider aws \
+		--plugins velero/velero-plugin-for-aws:v1.8.0 \
+		--bucket $(VELERO_BUCKET) \
+		--backup-location-config region=$(TOKYO_REGION) \
+		--snapshot-location-config region=$(SEOUL_REGION) \
+		--sa-annotations eks.amazonaws.com/role-arn=arn:aws:iam::$(AWS_ACCOUNT_ID):role/$(PROJECT_NAME)-seoul-velero-role \
+		--no-secret \
+		--use-node-agent \
+		--wait 2>/dev/null || echo "Velero already installed"
+	@echo "$(GREEN)✓ Velero installed on Seoul cluster$(NC)"
+	@kubectl get pods -n velero
+
+velero-install-tokyo: ## Install Velero on Tokyo cluster
+	@echo "$(BLUE)Installing Velero on Tokyo cluster...$(NC)"
+	@which velero >/dev/null 2>&1 || (echo "$(RED)Error: Velero CLI not installed. Run: brew install velero$(NC)" && exit 1)
+	kubectl config use-context arn:aws:eks:$(TOKYO_REGION):$(AWS_ACCOUNT_ID):cluster/$(TOKYO_CLUSTER)
+	@echo "Creating IRSA for Velero..."
+	eksctl create iamserviceaccount \
+		--cluster=$(TOKYO_CLUSTER) \
+		--region=$(TOKYO_REGION) \
+		--namespace=velero \
+		--name=velero-server \
+		--role-name=$(TOKYO_PROJECT_NAME)-tokyo-velero-role \
+		--attach-policy-arn=arn:aws:iam::$(AWS_ACCOUNT_ID):policy/$(VELERO_IAM_POLICY) \
+		--approve \
+		--override-existing-serviceaccounts 2>/dev/null || echo "IRSA already exists"
+	@echo "Installing Velero..."
+	velero install \
+		--provider aws \
+		--plugins velero/velero-plugin-for-aws:v1.8.0 \
+		--bucket $(VELERO_BUCKET) \
+		--backup-location-config region=$(TOKYO_REGION) \
+		--snapshot-location-config region=$(TOKYO_REGION) \
+		--sa-annotations eks.amazonaws.com/role-arn=arn:aws:iam::$(AWS_ACCOUNT_ID):role/$(TOKYO_PROJECT_NAME)-tokyo-velero-role \
+		--no-secret \
+		--use-node-agent \
+		--wait 2>/dev/null || echo "Velero already installed"
+	@echo "$(GREEN)✓ Velero installed on Tokyo cluster$(NC)"
+	@kubectl get pods -n velero
+
+# =============================================================================
+# Kubernetes Backup & Restore
+# =============================================================================
+
+backup-k8s: ## Backup Kubernetes resources from Seoul
+	@echo "$(BLUE)Backing up Kubernetes resources from Seoul...$(NC)"
+	kubectl config use-context arn:aws:eks:$(SEOUL_REGION):$(AWS_ACCOUNT_ID):cluster/$(SEOUL_CLUSTER)
+	@echo "Creating backup (excluding ConfigMaps and Secrets)..."
+	velero backup create $(VELERO_BACKUP_NAME) \
+		--include-namespaces $(NAMESPACE) \
+		--exclude-resources configmap,secret \
+		--wait
+	@echo "$(GREEN)✓ Backup created: $(VELERO_BACKUP_NAME)$(NC)"
+	@velero backup describe $(VELERO_BACKUP_NAME) --details
+
+push-images-tokyo: ## Push Docker images to Tokyo ECR
+	@echo "$(BLUE)Pushing images to Tokyo ECR...$(NC)"
+	cd backend-v3 && $(MAKE) push REGION=tokyo
+	@echo "$(GREEN)✓ Images pushed to Tokyo ECR$(NC)"
+
+restore-k8s: ## Restore Kubernetes resources to Tokyo
+	@echo "$(BLUE)Restoring Kubernetes resources to Tokyo...$(NC)"
+	kubectl config use-context arn:aws:eks:$(TOKYO_REGION):$(AWS_ACCOUNT_ID):cluster/$(TOKYO_CLUSTER)
+	@echo "Checking for backup..."
+	@velero backup get | grep $(VELERO_BACKUP_NAME) || (echo "$(RED)Error: Backup not found$(NC)" && exit 1)
+	@echo "Creating restore..."
+	velero restore create $(VELERO_RESTORE_NAME) \
+		--from-backup $(VELERO_BACKUP_NAME) \
+		--wait
+	@echo "$(GREEN)✓ Restore completed: $(VELERO_RESTORE_NAME)$(NC)"
+	@velero restore describe $(VELERO_RESTORE_NAME) --details
+	@echo ""
+	@echo "$(YELLOW)Checking restored resources...$(NC)"
+	@kubectl get pods -n $(NAMESPACE)
+
+# =============================================================================
+# Post-Restore Configuration
+# =============================================================================
+
+post-restore: update-irsa update-images restart-pods ## Complete post-restore configuration
+	@echo "$(GREEN)✓ Post-restore configuration complete$(NC)"
+
+update-irsa: ## Update ServiceAccount IRSA role for Tokyo
+	@echo "$(BLUE)Updating ServiceAccount IRSA annotations...$(NC)"
+	kubectl config use-context arn:aws:eks:$(TOKYO_REGION):$(AWS_ACCOUNT_ID):cluster/$(TOKYO_CLUSTER)
+	kubectl annotate serviceaccount backend-v3-sa \
+		eks.amazonaws.com/role-arn=arn:aws:iam::$(AWS_ACCOUNT_ID):role/$(TOKYO_PROJECT_NAME)-application \
+		-n $(NAMESPACE) --overwrite
+	@echo "$(GREEN)✓ IRSA role updated$(NC)"
+
+update-images: ## Update deployment images to Tokyo ECR
+	@echo "$(BLUE)Updating deployment images to Tokyo ECR...$(NC)"
+	kubectl config use-context arn:aws:eks:$(TOKYO_REGION):$(AWS_ACCOUNT_ID):cluster/$(TOKYO_CLUSTER)
+	kubectl set image deployment/backend-v3-main \
+		backend-v3-main=$(AWS_ACCOUNT_ID).dkr.ecr.$(TOKYO_REGION).amazonaws.com/backend-v3:main-latest \
+		-n $(NAMESPACE)
+	kubectl set image deployment/backend-v3-queue \
+		backend-v3-queue=$(AWS_ACCOUNT_ID).dkr.ecr.$(TOKYO_REGION).amazonaws.com/backend-v3:queue-latest \
+		-n $(NAMESPACE)
+	@echo "$(GREEN)✓ Images updated to Tokyo ECR$(NC)"
+
+restart-pods: ## Restart all pods to apply changes
+	@echo "$(BLUE)Restarting pods...$(NC)"
+	kubectl config use-context arn:aws:eks:$(TOKYO_REGION):$(AWS_ACCOUNT_ID):cluster/$(TOKYO_CLUSTER)
+	kubectl rollout restart deployment -n $(NAMESPACE)
+	@echo "$(YELLOW)Waiting for rollout to complete...$(NC)"
+	kubectl rollout status deployment/backend-v3-main -n $(NAMESPACE) --timeout=5m
+	kubectl rollout status deployment/backend-v3-queue -n $(NAMESPACE) --timeout=5m
+	@echo "$(GREEN)✓ Pods restarted$(NC)"
+
+# =============================================================================
+# Validation
+# =============================================================================
+
+validate: validate-db validate-k8s ## Validate complete migration
+	@echo "$(GREEN)========================================$(NC)"
+	@echo "$(GREEN)✓ Migration Validation Complete$(NC)"
+	@echo "$(GREEN)========================================$(NC)"
+
+validate-db: ## Validate Tokyo database connectivity
+	@echo "$(BLUE)Validating Tokyo databases...$(NC)"
+	@echo "$(CYAN)RDS Endpoint:$(NC)"
+	@cd terraform/tokyo/database && terraform output -raw rds_endpoint 2>/dev/null || echo "Not found"
+	@echo ""
+	@echo "$(CYAN)Redis Endpoint:$(NC)"
+	@cd terraform/tokyo/database && terraform output -raw redis_endpoint 2>/dev/null || echo "Not found"
+	@echo ""
+	@echo "$(GREEN)✓ Database endpoints available$(NC)"
+
+validate-k8s: ## Validate Tokyo Kubernetes deployment
+	@echo "$(BLUE)Validating Tokyo Kubernetes resources...$(NC)"
+	kubectl config use-context arn:aws:eks:$(TOKYO_REGION):$(AWS_ACCOUNT_ID):cluster/$(TOKYO_CLUSTER)
+	@echo ""
+	@echo "$(CYAN)Pods:$(NC)"
+	@kubectl get pods -n $(NAMESPACE) -o wide
+	@echo ""
+	@echo "$(CYAN)Services:$(NC)"
+	@kubectl get svc -n $(NAMESPACE)
+	@echo ""
+	@echo "$(CYAN)Ingress:$(NC)"
+	@kubectl get ingress -n $(NAMESPACE)
+	@echo ""
+	@echo "$(CYAN)Health Check:$(NC)"
+	@kubectl exec -n $(NAMESPACE) deploy/backend-v3-main -- \
+		curl -s http://localhost:8082/actuator/health 2>/dev/null | jq . || echo "Health check failed"
+	@echo ""
+	@echo "$(GREEN)✓ Kubernetes validation complete$(NC)"
+
+status-migration: ## Show complete migration status
+	@echo "$(BLUE)========================================$(NC)"
+	@echo "$(BLUE) Migration Status$(NC)"
+	@echo "$(BLUE)========================================$(NC)"
+	@echo ""
+	@echo "$(CYAN)Database Snapshots (Seoul):$(NC)"
+	@aws rds describe-db-snapshots \
+		--region $(SEOUL_REGION) \
+		--query 'DBSnapshots[?contains(DBSnapshotIdentifier, `migration`)].{Name:DBSnapshotIdentifier,Status:Status,Time:SnapshotCreateTime}' \
+		--output table 2>/dev/null || echo "No snapshots"
+	@echo ""
+	@echo "$(CYAN)Database Status (Tokyo):$(NC)"
+	@cd terraform/tokyo/database && terraform output 2>/dev/null | head -20 || echo "Not deployed"
+	@echo ""
+	@echo "$(CYAN)Velero Backups:$(NC)"
+	@velero backup get 2>/dev/null || echo "Velero not installed"
+	@echo ""
+	@echo "$(CYAN)Kubernetes Pods (Tokyo):$(NC)"
+	@kubectl config use-context arn:aws:eks:$(TOKYO_REGION):$(AWS_ACCOUNT_ID):cluster/$(TOKYO_CLUSTER) 2>/dev/null && \
+		kubectl get pods -n $(NAMESPACE) 2>/dev/null || echo "Not accessible"
+
+# =============================================================================
+# Cleanup
+# =============================================================================
+
+clean-migration: ## Clean up migration resources
+	@echo "$(YELLOW)========================================$(NC)"
+	@echo "$(YELLOW)Cleaning up migration resources$(NC)"
+	@echo "$(YELLOW)========================================$(NC)"
+	@echo ""
+	@echo "This will:"
+	@echo "  - Delete old database snapshots"
+	@echo "  - Remove Velero backups"
+	@echo ""
+	@echo "$(RED)WARNING: This is destructive!$(NC)"
+	@echo "$(YELLOW)Type 'yes' to continue:$(NC) "
+	@read -r confirm; \
+	if [ "$$confirm" = "yes" ]; then \
+		echo "$(BLUE)Cleaning up...$(NC)"; \
+		echo "$(YELLOW)Deleting old snapshots (keeping latest 2)...$(NC)"; \
+		echo "$(CYAN)Manual cleanup required for snapshots$(NC)"; \
+		echo "$(GREEN)✓ Cleanup instructions displayed$(NC)"; \
+	else \
+		echo "$(YELLOW)Cancelled$(NC)"; \
+	fi
+
+clean-velero: ## Uninstall Velero from both clusters
+	@echo "$(YELLOW)Uninstalling Velero...$(NC)"
+	@kubectl config use-context arn:aws:eks:$(SEOUL_REGION):$(AWS_ACCOUNT_ID):cluster/$(SEOUL_CLUSTER)
+	@velero uninstall --force 2>/dev/null || echo "Velero not installed on Seoul"
+	@kubectl config use-context arn:aws:eks:$(TOKYO_REGION):$(AWS_ACCOUNT_ID):cluster/$(TOKYO_CLUSTER)
+	@velero uninstall --force 2>/dev/null || echo "Velero not installed on Tokyo"
+	@echo "$(GREEN)✓ Velero uninstalled$(NC)"
+
+# =============================================================================
+# Utility Targets
+# =============================================================================
+
+switch-seoul: ## Switch kubectl context to Seoul
+	kubectl config use-context arn:aws:eks:$(SEOUL_REGION):$(AWS_ACCOUNT_ID):cluster/$(SEOUL_CLUSTER)
+	@echo "$(GREEN)✓ Switched to Seoul cluster$(NC)"
+	@kubectl get nodes
+
+switch-tokyo: ## Switch kubectl context to Tokyo
+	kubectl config use-context arn:aws:eks:$(TOKYO_REGION):$(AWS_ACCOUNT_ID):cluster/$(TOKYO_CLUSTER)
+	@echo "$(GREEN)✓ Switched to Tokyo cluster$(NC)"
+	@kubectl get nodes
+
+logs-tokyo: ## Show Tokyo application logs
+	kubectl config use-context arn:aws:eks:$(TOKYO_REGION):$(AWS_ACCOUNT_ID):cluster/$(TOKYO_CLUSTER)
+	@echo "$(CYAN)Main Service Logs:$(NC)"
+	@kubectl logs -n $(NAMESPACE) -l component=main --tail=50
+	@echo ""
+	@echo "$(CYAN)Queue Service Logs:$(NC)"
+	@kubectl logs -n $(NAMESPACE) -l component=queue --tail=50

@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ticketing-config
+  namespace: {{ .Release.Namespace }}
+data:
+  # Spring Boot Standard Environment Variables
+  SPRING_DATASOURCE_URL: {{ .Values.global.env.SPRING_DATASOURCE_URL | quote }}
+  SPRING_DATASOURCE_USERNAME: {{ .Values.global.env.SPRING_DATASOURCE_USERNAME | quote }}
+  SPRING_DATASOURCE_PASSWORD: {{ .Values.global.env.SPRING_DATASOURCE_PASSWORD | quote }}
+
+  # Redis Configuration
+  SPRING_REDIS_HOST: {{ .Values.global.env.SPRING_REDIS_HOST | quote }}
+  SPRING_REDIS_PORT: {{ .Values.global.env.SPRING_REDIS_PORT | quote }}
+
+  # Spring Profiles
+  SPRING_PROFILES_ACTIVE: {{ .Values.global.env.SPRING_PROFILES_ACTIVE | quote }}
+
+  # JWT Configuration
+  JWT_SECRET: {{ .Values.global.env.JWT_SECRET | quote }}
+
+  # AWS Configuration
+  AWS_REGION: {{ .Values.global.env.AWS_REGION | quote }}
+  COGNITO_USER_POOL_ID: {{ .Values.global.env.COGNITO_USER_POOL_ID | quote }}
+  COGNITO_CLIENT_ID: {{ .Values.global.env.COGNITO_CLIENT_ID | quote }}
+  COGNITO_ENABLED: {{ .Values.global.env.COGNITO_ENABLED | quote }}
+  COGNITO_REGION: {{ .Values.global.env.COGNITO_REGION | quote }}
+
+  # Redis Settings (Used in Admin)
+  REDIS_HOST_LOCAL: {{ .Values.global.env.SPRING_REDIS_HOST | quote }}
+  REDIS_PORT_LOCAL: {{ .Values.global.env.SPRING_REDIS_PORT | quote }}
+
+  # JPA DDL Settings
+  SPRING_JPA_HIBERNATE_DDL_AUTO: {{ .Values.global.env.SPRING_JPA_HIBERNATE_DDL_AUTO | quote }}

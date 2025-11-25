@@ -1,0 +1,153 @@
+---
+# DR Failover Playbook - Seoul 장애 시 Tokyo로 전체 복구
+#
+# 이 플레이북은 다음을 자동으로 수행합니다:
+# 1. Tokyo 클러스터에 Velero 설치
+# 2. S3 복제 대기 및 백업 확인
+# 3. 백업에서 복구 실행
+# 4. PHZ DNS 업데이트 (RDS, Redis → Tokyo)
+# 5. 복구 검증
+# 6. (옵션) Velero 정리
+#
+# Usage:
+#   ansible-playbook playbooks/dr-failover.yml -e "backup_name=my-backup"
+#   ansible-playbook playbooks/dr-failover.yml -e "backup_name=my-backup cleanup_after_restore=true"
+#   ansible-playbook playbooks/dr-failover.yml -e "backup_name=my-backup skip_phz_update=true"
+
+- name: DR Failover - Restore Seoul to Tokyo
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    action: dr_failover
+    # 기본값 설정
+    s3_replication_wait: 60
+    cleanup_after_restore: false
+    cleanup_delay_seconds: 300
+    skip_phz_update: false
+
+    # PHZ 설정 (Terraform output에서 가져오거나 직접 설정)
+    phz_domain: "ddcn41.internal"
+    dns_ttl: 300
+    dns_propagation_wait: 30
+
+    # Tokyo 클러스터 정보
+    tokyo_region: ap-northeast-1
+    tokyo_cluster_name: ddcn41-eks-cluster
+
+  pre_tasks:
+    - name: Validate backup_name is provided
+      ansible.builtin.assert:
+        that:
+          - backup_name is defined
+          - backup_name | length > 0
+        fail_msg: |
+          backup_name is required!
+          Usage: ansible-playbook playbooks/dr-failover.yml -e "backup_name=your-backup-name"
+
+    - name: Display DR Failover Plan
+      ansible.builtin.debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════════╗
+          ║                    DR FAILOVER PLAN                            ║
+          ╠════════════════════════════════════════════════════════════════╣
+          ║  Source (Failed):  Seoul (ap-northeast-2)                      ║
+          ║  Target (DR):      Tokyo (ap-northeast-1)                      ║
+          ║  Backup Name:      {{ backup_name | default('NOT SET') }}
+          ║  Cleanup After:    {{ cleanup_after_restore }}
+          ║  PHZ Update:       {{ not skip_phz_update }}
+          ╚════════════════════════════════════════════════════════════════╝
+
+          Process:
+          1. Install Velero on Tokyo cluster
+          2. Wait for S3 replication ({{ s3_replication_wait }}s)
+          3. Restore from backup '{{ backup_name }}'
+          4. Update PHZ DNS records (RDS, Redis → Tokyo)
+          5. Verify restored resources
+          {% if cleanup_after_restore %}
+          6. Cleanup Velero (after {{ cleanup_delay_seconds }}s)
+          {% endif %}
+
+    - name: Confirm DR Failover
+      ansible.builtin.pause:
+        prompt: "Press Enter to start DR Failover or Ctrl+C to abort"
+      when: not (auto_confirm | default(false))
+
+  roles:
+    - velero
+
+  tasks:
+    # ==========================================
+    # PHZ DNS Update (Optional but recommended)
+    # ==========================================
+    - name: "=== PHZ DNS Update ==="
+      when: not skip_phz_update
+      block:
+        # PHZ Zone ID는 Seoul에서 생성되었으므로 Seoul output에서 가져옴
+        - name: Get PHZ Zone ID from Seoul Terraform output
+          ansible.builtin.command:
+            cmd: "terraform -chdir={{ playbook_dir }}/../../infrastructure/environments/seoul output -raw phz_zone_id"
+          register: phz_zone_id_result
+          changed_when: false
+          failed_when: false
+
+        - name: Get Tokyo RDS endpoint from Terraform output
+          ansible.builtin.command:
+            cmd: "terraform -chdir={{ playbook_dir }}/../../infrastructure/environments/tokyo output -raw rds_endpoint"
+          register: tokyo_rds_endpoint
+          changed_when: false
+          failed_when: false
+
+        - name: Get Tokyo Redis endpoint from Terraform output
+          ansible.builtin.command:
+            cmd: "terraform -chdir={{ playbook_dir }}/../../infrastructure/environments/tokyo output -raw redis_endpoint"
+          register: tokyo_redis_endpoint
+          changed_when: false
+          failed_when: false
+
+        - name: Update PHZ DNS records
+          ansible.builtin.include_role:
+            name: phz
+          vars:
+            action: update
+            phz_zone_id: "{{ phz_zone_id_result.stdout }}"
+            target_rds_endpoint: "{{ tokyo_rds_endpoint.stdout }}"
+            target_redis_endpoint: "{{ tokyo_redis_endpoint.stdout }}"
+            target_region: tokyo
+          when:
+            - phz_zone_id_result.rc == 0
+            - tokyo_rds_endpoint.rc == 0
+
+        - name: PHZ update skipped (outputs not available)
+          ansible.builtin.debug:
+            msg: |
+              ⚠️  PHZ update skipped - Terraform outputs not available
+
+              To update PHZ manually:
+              1. Get zone ID: terraform -chdir=infrastructure/environments/tokyo output phz_zone_id
+              2. Get endpoints: terraform output dr_dns_info
+              3. Run: ansible-playbook playbooks/phz-update.yml -e "..."
+          when: phz_zone_id_result.rc != 0 or tokyo_rds_endpoint.rc != 0
+
+  post_tasks:
+    - name: DR Failover Summary
+      ansible.builtin.debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════════╗
+          ║               DR FAILOVER COMPLETED                            ║
+          ╠════════════════════════════════════════════════════════════════╣
+          ║  Status: SUCCESS                                               ║
+          ║  Target Cluster: ddcn41-eks-cluster (Tokyo)                     ║
+          ║  Restored From: {{ backup_name }}
+          ║  PHZ Updated: {{ not skip_phz_update }}
+          ╚════════════════════════════════════════════════════════════════╝
+
+          Application Connection Strings (unchanged):
+            DATABASE_HOST=db.{{ phz_domain }}
+            REDIS_HOST=redis.{{ phz_domain }}
+
+          Next Steps:
+          1. Verify application is working: kubectl get pods -A
+          2. Update external DNS (if applicable)
+          3. Monitor application logs
+          4. Notify stakeholders

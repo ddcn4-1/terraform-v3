@@ -1,0 +1,170 @@
+---
+# PHZ Update Tasks - Update DNS records for DR failover
+#
+# Variables required:
+#   - phz_zone_id: Route53 Private Hosted Zone ID
+#   - phz_domain: Domain name (e.g., ticket-hs.internal)
+#   - target_rds_endpoint: New RDS endpoint (Tokyo)
+#   - target_redis_endpoint: New Redis endpoint (Tokyo)
+
+- name: Get current RDS record
+  ansible.builtin.command:
+    cmd: >
+      aws route53 list-resource-record-sets
+      --hosted-zone-id {{ phz_zone_id }}
+      --query "ResourceRecordSets[?Name=='db.{{ phz_domain }}.'].ResourceRecords[0].Value"
+      --output text
+  register: current_rds_record
+  changed_when: false
+
+- name: Get current Redis record
+  ansible.builtin.command:
+    cmd: >
+      aws route53 list-resource-record-sets
+      --hosted-zone-id {{ phz_zone_id }}
+      --query "ResourceRecordSets[?Name=='redis.{{ phz_domain }}.'].ResourceRecords[0].Value"
+      --output text
+  register: current_redis_record
+  changed_when: false
+
+- name: Display current DNS records
+  ansible.builtin.debug:
+    msg: |
+      Current DNS Records (Before Update):
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      RDS:   {{ current_rds_record.stdout | default('NOT SET') }}
+      Redis: {{ current_redis_record.stdout | default('NOT SET') }}
+
+      Target DNS Records (After Update):
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      RDS:   {{ target_rds_endpoint | regex_replace(':.*', '') }}
+      Redis: {{ target_redis_endpoint }}
+
+- name: Save current records for rollback
+  ansible.builtin.set_fact:
+    rollback_rds_endpoint: "{{ current_rds_record.stdout }}"
+    rollback_redis_endpoint: "{{ current_redis_record.stdout }}"
+
+- name: Create Route53 change batch for RDS
+  ansible.builtin.copy:
+    content: |
+      {
+        "Comment": "DR Failover - Update RDS endpoint to {{ target_region | default('tokyo') }}",
+        "Changes": [
+          {
+            "Action": "UPSERT",
+            "ResourceRecordSet": {
+              "Name": "db.{{ phz_domain }}",
+              "Type": "CNAME",
+              "TTL": {{ dns_ttl | default(300) }},
+              "ResourceRecords": [
+                {
+                  "Value": "{{ target_rds_endpoint | regex_replace(':.*', '') }}"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    dest: /tmp/phz-rds-change-batch.json
+    mode: "0644"
+  when: target_rds_endpoint is defined and target_rds_endpoint | length > 0
+
+- name: Create Route53 change batch for Redis
+  ansible.builtin.copy:
+    content: |
+      {
+        "Comment": "DR Failover - Update Redis endpoint to {{ target_region | default('tokyo') }}",
+        "Changes": [
+          {
+            "Action": "UPSERT",
+            "ResourceRecordSet": {
+              "Name": "redis.{{ phz_domain }}",
+              "Type": "CNAME",
+              "TTL": {{ dns_ttl | default(300) }},
+              "ResourceRecords": [
+                {
+                  "Value": "{{ target_redis_endpoint }}"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    dest: /tmp/phz-redis-change-batch.json
+    mode: "0644"
+  when: target_redis_endpoint is defined and target_redis_endpoint | length > 0
+
+- name: Update RDS DNS record
+  ansible.builtin.command:
+    cmd: >
+      aws route53 change-resource-record-sets
+      --hosted-zone-id {{ phz_zone_id }}
+      --change-batch file:///tmp/phz-rds-change-batch.json
+  register: rds_update_result
+  when: target_rds_endpoint is defined and target_rds_endpoint | length > 0
+
+- name: Update Redis DNS record
+  ansible.builtin.command:
+    cmd: >
+      aws route53 change-resource-record-sets
+      --hosted-zone-id {{ phz_zone_id }}
+      --change-batch file:///tmp/phz-redis-change-batch.json
+  register: redis_update_result
+  when: target_redis_endpoint is defined and target_redis_endpoint | length > 0
+
+- name: Wait for Route53 changes to propagate
+  ansible.builtin.pause:
+    seconds: "{{ dns_propagation_wait | default(30) }}"
+    prompt: "Waiting {{ dns_propagation_wait | default(30) }}s for DNS propagation..."
+
+- name: Verify RDS record updated
+  ansible.builtin.command:
+    cmd: >
+      aws route53 list-resource-record-sets
+      --hosted-zone-id {{ phz_zone_id }}
+      --query "ResourceRecordSets[?Name=='db.{{ phz_domain }}.'].ResourceRecords[0].Value"
+      --output text
+  register: updated_rds_record
+  changed_when: false
+
+- name: Verify Redis record updated
+  ansible.builtin.command:
+    cmd: >
+      aws route53 list-resource-record-sets
+      --hosted-zone-id {{ phz_zone_id }}
+      --query "ResourceRecordSets[?Name=='redis.{{ phz_domain }}.'].ResourceRecords[0].Value"
+      --output text
+  register: updated_redis_record
+  changed_when: false
+
+- name: Display update results
+  ansible.builtin.debug:
+    msg: |
+      ╔════════════════════════════════════════════════════════════════╗
+      ║              PHZ DNS UPDATE COMPLETED                          ║
+      ╠════════════════════════════════════════════════════════════════╣
+      ║  Zone ID: {{ phz_zone_id }}
+      ║  Domain:  {{ phz_domain }}
+      ╠════════════════════════════════════════════════════════════════╣
+      ║  RDS Record:                                                   ║
+      ║    Before: {{ current_rds_record.stdout | default('N/A') }}
+      ║    After:  {{ updated_rds_record.stdout | default('N/A') }}
+      ╠════════════════════════════════════════════════════════════════╣
+      ║  Redis Record:                                                 ║
+      ║    Before: {{ current_redis_record.stdout | default('N/A') }}
+      ║    After:  {{ updated_redis_record.stdout | default('N/A') }}
+      ╚════════════════════════════════════════════════════════════════╝
+
+      Application Connection Strings (unchanged):
+        DATABASE_HOST=db.{{ phz_domain }}
+        REDIS_HOST=redis.{{ phz_domain }}
+
+- name: Cleanup temp files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /tmp/phz-rds-change-batch.json
+    - /tmp/phz-redis-change-batch.json
+  failed_when: false

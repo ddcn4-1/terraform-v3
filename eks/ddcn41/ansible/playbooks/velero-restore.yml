@@ -1,0 +1,41 @@
+---
+# Velero Restore Playbook
+# Usage: ansible-playbook playbooks/velero-restore.yml -e "target=tokyo backup_name=my-backup"
+
+- name: Restore from Velero Backup
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    action: restore
+    # Lookup cluster config from inventory based on target
+    _cluster_cfg: "{{ cluster_configs[target | default('tokyo')] }}"
+    region: "{{ _cluster_cfg.region }}"
+    cluster_name: "{{ _cluster_cfg.cluster_name }}"
+    velero_bucket: "{{ _cluster_cfg.velero_bucket }}"
+    is_primary: "{{ _cluster_cfg.is_primary }}"
+    velero_role_source: "{{ _cluster_cfg.velero_role_source }}"
+
+  pre_tasks:
+    - name: Validate backup_name is provided
+      ansible.builtin.assert:
+        that:
+          - backup_name is defined
+          - backup_name | length > 0
+        fail_msg: "backup_name is required. Usage: -e 'backup_name=your-backup-name'"
+
+    - name: Display restore info
+      ansible.builtin.debug:
+        msg: |
+          Restoring backup:
+            Backup Name: {{ backup_name }}
+            Target Cluster: {{ cluster_name }}
+            Target Region: {{ region }}
+
+  roles:
+    - velero
+
+  post_tasks:
+    - name: Restore complete
+      ansible.builtin.debug:
+        msg: "Restore from '{{ backup_name }}' completed on {{ cluster_name }}"

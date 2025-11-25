@@ -1,0 +1,136 @@
+---
+# PHZ Update Playbook - DNS 레코드 수동 업데이트
+#
+# 이 플레이북은 PHZ DNS 레코드를 수동으로 업데이트합니다.
+# DR failover 외에도 유지보수, Blue/Green 배포 등에 활용 가능
+#
+# Usage:
+#   # Tokyo로 전환
+#   ansible-playbook playbooks/phz-update.yml -e "target_region=tokyo"
+#
+#   # Seoul로 롤백
+#   ansible-playbook playbooks/phz-update.yml -e "target_region=seoul"
+#
+#   # 직접 endpoint 지정
+#   ansible-playbook playbooks/phz-update.yml \
+#     -e "phz_zone_id=Z123456 target_rds_endpoint=mydb.xxx.rds.amazonaws.com target_redis_endpoint=myredis.xxx.cache.amazonaws.com"
+
+- name: PHZ DNS Update
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    phz_domain: "ddcn41.internal"
+    dns_ttl: 300
+    dns_propagation_wait: 30
+
+    # Region configs
+    regions:
+      seoul:
+        aws_region: ap-northeast-2
+        terraform_dir: "{{ playbook_dir }}/../../infrastructure/environments/seoul"
+      tokyo:
+        aws_region: ap-northeast-1
+        terraform_dir: "{{ playbook_dir }}/../../infrastructure/environments/tokyo"
+
+  pre_tasks:
+    - name: Validate target_region is provided
+      ansible.builtin.assert:
+        that:
+          - target_region is defined or (phz_zone_id is defined and target_rds_endpoint is defined)
+        fail_msg: |
+          Either target_region or explicit endpoints must be provided!
+
+          Usage options:
+          1. By region:
+             ansible-playbook playbooks/phz-update.yml -e "target_region=tokyo"
+
+          2. By explicit endpoints:
+             ansible-playbook playbooks/phz-update.yml \
+               -e "phz_zone_id=Z123 target_rds_endpoint=mydb.xxx target_redis_endpoint=myredis.xxx"
+
+    - name: Set region config
+      ansible.builtin.set_fact:
+        region_config: "{{ regions[target_region] }}"
+      when: target_region is defined
+
+  tasks:
+    # ==========================================
+    # Get endpoints from Terraform (if using target_region)
+    # ==========================================
+    - name: Get endpoints from Terraform
+      when: target_region is defined
+      block:
+        # PHZ Zone ID는 Seoul에서 생성되었으므로 항상 Seoul output에서 가져옴
+        - name: Get PHZ Zone ID from Seoul
+          ansible.builtin.command:
+            cmd: "terraform -chdir={{ regions.seoul.terraform_dir }} output -raw phz_zone_id"
+          register: tf_phz_zone_id
+          changed_when: false
+
+        # RDS/Redis endpoint는 target_region에서 가져옴
+        - name: Get RDS endpoint from target region
+          ansible.builtin.command:
+            cmd: "terraform -chdir={{ region_config.terraform_dir }} output -raw rds_endpoint"
+          register: tf_rds_endpoint
+          changed_when: false
+
+        - name: Get Redis endpoint from target region
+          ansible.builtin.command:
+            cmd: "terraform -chdir={{ region_config.terraform_dir }} output -raw redis_endpoint"
+          register: tf_redis_endpoint
+          changed_when: false
+
+        - name: Set endpoints from Terraform
+          ansible.builtin.set_fact:
+            phz_zone_id: "{{ tf_phz_zone_id.stdout }}"
+            target_rds_endpoint: "{{ tf_rds_endpoint.stdout }}"
+            target_redis_endpoint: "{{ tf_redis_endpoint.stdout }}"
+
+    # ==========================================
+    # Display update plan
+    # ==========================================
+    - name: Display update plan
+      ansible.builtin.debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════════╗
+          ║              PHZ DNS UPDATE PLAN                               ║
+          ╠════════════════════════════════════════════════════════════════╣
+          ║  Zone ID: {{ phz_zone_id }}
+          ║  Domain:  {{ phz_domain }}
+          ║  Target:  {{ target_region | default('custom') }}
+          ╠════════════════════════════════════════════════════════════════╣
+          ║  New Endpoints:                                                ║
+          ║    RDS:   {{ target_rds_endpoint | regex_replace(':.*', '') }}
+          ║    Redis: {{ target_redis_endpoint }}
+          ╚════════════════════════════════════════════════════════════════╝
+
+    - name: Confirm update
+      ansible.builtin.pause:
+        prompt: "Press Enter to update DNS records or Ctrl+C to abort"
+      when: not (auto_confirm | default(false))
+
+    # ==========================================
+    # Execute update
+    # ==========================================
+    - name: Update PHZ DNS records
+      ansible.builtin.include_role:
+        name: phz
+      vars:
+        action: update
+
+    # ==========================================
+    # Summary
+    # ==========================================
+    - name: Update complete
+      ansible.builtin.debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════════╗
+          ║              PHZ DNS UPDATE COMPLETED                          ║
+          ╚════════════════════════════════════════════════════════════════╝
+
+          Application Connection Strings (unchanged):
+            DATABASE_HOST=db.{{ phz_domain }}
+            REDIS_HOST=redis.{{ phz_domain }}
+
+          These DNS names now point to {{ target_region | default('custom') }} endpoints.

@@ -1,62 +1,108 @@
-# Local .terraform directories
-**/.terraform/*
+# Gradle 관련
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
 
-# .tfstate files
-*.tfstate
-*.tfstate.*
+gradle/wrapper/gradle-wrapper.properties.lock
 
-# Crash log files
-crash.log
-crash.*.log
+# 인증서
+infra/nginx/certs/
 
-# Exclude all .tfvars files, which are likely to contain sensitive data
-*.tfvars
-*.tfvars.json
+# Java 컴파일 파일
+*.class
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.rar
 
-# Ignore override files as they are usually used to override resources locally
-override.tf
-override.tf.json
-*_override.tf
-*_override.tf.json
+# IDE 관련
+## IntelliJ IDEA
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
 
-# Ignore CLI configuration files
-.terraformrc
-terraform.rc
-
-# Ignore plan files
-*.tfplan
-
-# SSH keys
-*.pem
-*.key
-
-# Kubespray
-kubespray/
-!kubespray/hj/
-!kubespray/jy/
-inventory/backup/
-*.retry
-
-# AWS credentials
-.aws/
-credentials
-
-# OS specific
+# OS 관련
+## macOS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
+## Windows
+desktop.ini
+
+## Linux
 *~
 
-# Logs
+# 로그 파일
+logs/
 *.log
+log/
+*.tmp
+*.temp
+*.swp
+*.swo
+*.pid
+*.seed
+*.pid.lock
 
 # Backup files
 *.backup
 *.bak
 
 **/backend-v3/
+
+# Spring Boot 관련
+application-local.yml
+application-local.properties
+application-dev.yml
+application-dev.properties
+application-prod.properties
+application.yml
+application.properties
+application.yaml
+
+# 데이터베이스 파일
+*.db
+*.sqlite
+*.h2.db
+data.sql
+
+# 환경 변수 파일
+.env
+.env.local
+
+# Docker 관련 (선택사항)
+docker-compose.override.yml
+
+# 테스트 관련
+test-results/
+/test-output/
+
+# 기타
+infra/config/cognito-common.yml
+
+# Terraform 관련
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*tfplan*
+.terraformrc
+terraform.rc

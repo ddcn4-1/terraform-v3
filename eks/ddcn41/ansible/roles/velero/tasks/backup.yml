@@ -1,0 +1,66 @@
+---
+# Velero backup tasks
+
+- name: Update kubeconfig for source cluster
+  ansible.builtin.command:
+    cmd: "aws eks update-kubeconfig --region {{ aws_region }} --name {{ cluster_name }}"
+  changed_when: true
+
+- name: Generate backup name if not provided
+  ansible.builtin.set_fact:
+    backup_name: "{{ backup_name | default('backup-' + ansible_date_time.epoch) }}"
+
+- name: Create Velero backup
+  ansible.builtin.command:
+    cmd: >
+      velero backup create {{ backup_name }}
+      --ttl {{ backup_ttl }}
+      {% if backup_namespaces is defined %}
+      --include-namespaces {{ backup_namespaces | join(',') }}
+      {% endif %}
+      {% if backup_exclude_namespaces is defined %}
+      --exclude-namespaces {{ backup_exclude_namespaces | join(',') }}
+      {% endif %}
+      --wait
+  register: backup_result
+  changed_when: backup_result.rc == 0
+
+- name: Get backup status
+  ansible.builtin.command:
+    cmd: "velero backup get {{ backup_name }} -o json"
+  register: backup_status_json
+  changed_when: false
+
+- name: Parse backup status
+  ansible.builtin.set_fact:
+    backup_phase: "{{ (backup_status_json.stdout | from_json).status.phase }}"
+
+- name: Check backup status
+  ansible.builtin.fail:
+    msg: "Backup failed with phase: {{ backup_phase }}"
+  when: backup_phase == 'Failed'
+
+- name: Get backup details for display
+  ansible.builtin.command:
+    cmd: "velero backup describe {{ backup_name }}"
+  register: backup_status
+  changed_when: false
+
+- name: Display backup details
+  ansible.builtin.debug:
+    msg: |
+      Backup '{{ backup_name }}' completed successfully.
+      Details:
+      {{ backup_status.stdout }}
+
+- name: Get backup logs
+  ansible.builtin.command:
+    cmd: "velero backup logs {{ backup_name }}"
+  register: backup_logs
+  changed_when: false
+  when: show_logs | default(false)
+
+- name: Display backup logs
+  ansible.builtin.debug:
+    msg: "{{ backup_logs.stdout_lines }}"
+  when: show_logs | default(false)

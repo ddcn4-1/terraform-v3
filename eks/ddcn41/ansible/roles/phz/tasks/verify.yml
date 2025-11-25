@@ -1,0 +1,78 @@
+---
+# PHZ Verify Tasks - Verify DNS records are correctly configured
+
+- name: Get RDS DNS record
+  ansible.builtin.command:
+    cmd: >
+      aws route53 list-resource-record-sets
+      --hosted-zone-id {{ phz_zone_id }}
+      --query "ResourceRecordSets[?Name=='db.{{ phz_domain }}.']"
+      --output json
+  register: rds_record
+  changed_when: false
+
+- name: Get Redis DNS record
+  ansible.builtin.command:
+    cmd: >
+      aws route53 list-resource-record-sets
+      --hosted-zone-id {{ phz_zone_id }}
+      --query "ResourceRecordSets[?Name=='redis.{{ phz_domain }}.']"
+      --output json
+  register: redis_record
+  changed_when: false
+
+- name: Parse records
+  ansible.builtin.set_fact:
+    rds_record_data: "{{ rds_record.stdout | from_json }}"
+    redis_record_data: "{{ redis_record.stdout | from_json }}"
+
+- name: Display current PHZ status
+  ansible.builtin.debug:
+    msg: |
+      ╔════════════════════════════════════════════════════════════════╗
+      ║              PHZ DNS VERIFICATION                              ║
+      ╠════════════════════════════════════════════════════════════════╣
+      ║  Zone ID: {{ phz_zone_id }}
+      ║  Domain:  {{ phz_domain }}
+      ╠════════════════════════════════════════════════════════════════╣
+      ║  RDS Record (db.{{ phz_domain }}):
+      {% if rds_record_data | length > 0 %}
+      ║    Type:  {{ rds_record_data[0].Type }}
+      ║    TTL:   {{ rds_record_data[0].TTL }}
+      ║    Value: {{ rds_record_data[0].ResourceRecords[0].Value }}
+      {% else %}
+      ║    NOT CONFIGURED
+      {% endif %}
+      ╠════════════════════════════════════════════════════════════════╣
+      ║  Redis Record (redis.{{ phz_domain }}):
+      {% if redis_record_data | length > 0 %}
+      ║    Type:  {{ redis_record_data[0].Type }}
+      ║    TTL:   {{ redis_record_data[0].TTL }}
+      ║    Value: {{ redis_record_data[0].ResourceRecords[0].Value }}
+      {% else %}
+      ║    NOT CONFIGURED
+      {% endif %}
+      ╚════════════════════════════════════════════════════════════════╝
+
+- name: Test RDS DNS resolution
+  ansible.builtin.command:
+    cmd: "dig +short db.{{ phz_domain }}"
+  register: rds_dig_result
+  changed_when: false
+  failed_when: false
+
+- name: Test Redis DNS resolution
+  ansible.builtin.command:
+    cmd: "dig +short redis.{{ phz_domain }}"
+  register: redis_dig_result
+  changed_when: false
+  failed_when: false
+
+- name: Display DNS resolution test
+  ansible.builtin.debug:
+    msg: |
+      DNS Resolution Test:
+      ━━━━━━━━━━━━━━━━━━━━
+      db.{{ phz_domain }} → {{ rds_dig_result.stdout | default('FAILED') }}
+      redis.{{ phz_domain }} → {{ redis_dig_result.stdout | default('FAILED') }}
+  when: rds_dig_result is defined

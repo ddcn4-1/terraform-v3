@@ -1,0 +1,84 @@
+version: v1
+resourceModifierRules:
+# Seoul ConfigMap을 Tokyo ConfigMap으로 교체
+- conditions:
+    groupResource: configmaps
+    resourceNameRegex: "^hs-eks-application-config$"
+    namespaces:
+    - ddcn41
+  patches:
+  - operation: replace
+    path: "/metadata/name"
+    value: "hs-eks-tokyo-application-config"
+
+# Seoul Database Secret을 Tokyo Secret으로 교체
+- conditions:
+    groupResource: secrets
+    resourceNameRegex: "^hs-eks-database-credentials$"
+    namespaces:
+    - ddcn41
+  patches:
+  - operation: replace
+    path: "/metadata/name"
+    value: "hs-eks-tokyo-database-credentials"
+
+# Seoul Redis Secret을 Tokyo Secret으로 교체
+- conditions:
+    groupResource: secrets
+    resourceNameRegex: "^hs-eks-redis-credentials$"
+    namespaces:
+    - ddcn41
+  patches:
+  - operation: replace
+    path: "/metadata/name"
+    value: "hs-eks-tokyo-redis-credentials"
+
+# Seoul JWT Secret을 Tokyo Secret으로 교체
+- conditions:
+    groupResource: secrets
+    resourceNameRegex: "^hs-eks-jwt-cognito-secrets$"
+    namespaces:
+    - ddcn41
+  patches:
+  - operation: replace
+    path: "/metadata/name"
+    value: "hs-eks-tokyo-jwt-cognito-secrets"
+
+# Seoul Application Secret을 Tokyo Secret으로 교체
+- conditions:
+    groupResource: secrets
+    resourceNameRegex: "^hs-eks-application-config$"
+    namespaces:
+    - ddcn41
+  patches:
+  - operation: replace
+    path: "/metadata/name"
+    value: "hs-eks-tokyo-application-config"
+
+# Deployment envFrom에서 ConfigMap/Secret 참조를 Tokyo로 변경
+- conditions:
+    groupResource: deployments.apps
+    resourceNameRegex: "^backend-v3-.*"
+    namespaces:
+    - ddcn41
+  patches:
+  # envFrom configMapRef
+  - operation: replace
+    path: "/spec/template/spec/containers/0/envFrom/0/configMapRef/name"
+    value: "hs-eks-tokyo-application-config"
+  # envFrom database secret
+  - operation: replace
+    path: "/spec/template/spec/containers/0/envFrom/1/secretRef/name"
+    value: "hs-eks-tokyo-database-credentials"
+  # envFrom redis secret
+  - operation: replace
+    path: "/spec/template/spec/containers/0/envFrom/2/secretRef/name"
+    value: "hs-eks-tokyo-redis-credentials"
+  # envFrom jwt secret
+  - operation: replace
+    path: "/spec/template/spec/containers/0/envFrom/3/secretRef/name"
+    value: "hs-eks-tokyo-jwt-cognito-secrets"
+  # env configMapKeyRef
+  - operation: replace
+    path: "/spec/template/spec/containers/0/env/1/valueFrom/configMapKeyRef/name"
+    value: "hs-eks-tokyo-application-config"

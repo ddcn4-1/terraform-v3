@@ -1,0 +1,43 @@
+---
+# Velero Install Playbook
+# Usage: ansible-playbook playbooks/velero-install.yml -e "target=seoul"
+#        ansible-playbook playbooks/velero-install.yml -e "target=tokyo"
+
+- name: Install Velero on EKS Cluster
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    action: install
+    # Lookup cluster config from inventory based on target
+    _cluster_cfg: "{{ cluster_configs[target | default('seoul')] }}"
+    region: "{{ _cluster_cfg.region }}"
+    cluster_name: "{{ _cluster_cfg.cluster_name }}"
+    velero_bucket: "{{ _cluster_cfg.velero_bucket }}"
+    is_primary: "{{ _cluster_cfg.is_primary }}"
+    velero_role_source: "{{ _cluster_cfg.velero_role_source }}"
+    terraform_dir: "{{ playbook_dir }}/../../infrastructure/environments/{{ target | default('seoul') }}"
+
+  pre_tasks:
+    - name: Validate target
+      ansible.builtin.assert:
+        that:
+          - target is defined
+          - target in ['seoul', 'tokyo']
+        fail_msg: "target must be 'seoul' or 'tokyo'"
+
+    - name: Display installation target
+      ansible.builtin.debug:
+        msg: |
+          Installing Velero on:
+            Cluster: {{ cluster_name }}
+            Region: {{ region }}
+            Bucket: {{ velero_bucket }}
+
+  roles:
+    - velero
+
+  post_tasks:
+    - name: Installation complete
+      ansible.builtin.debug:
+        msg: "Velero installed successfully on {{ cluster_name }}"

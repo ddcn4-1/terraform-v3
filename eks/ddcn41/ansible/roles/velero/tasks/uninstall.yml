@@ -1,0 +1,76 @@
+---
+# Velero uninstall tasks
+
+- name: Update kubeconfig for target cluster
+  ansible.builtin.command:
+    cmd: "aws eks update-kubeconfig --region {{ aws_region }} --name {{ cluster_name }}"
+  changed_when: true
+
+- name: Check if Velero is installed
+  kubernetes.core.helm_info:
+    name: velero
+    release_namespace: "{{ velero_namespace }}"
+  register: velero_helm_info
+  failed_when: false
+
+- name: Display Velero status before uninstall
+  ansible.builtin.debug:
+    msg: "Velero installation found, proceeding with uninstall"
+  when: velero_helm_info.status is defined
+
+- name: Delete all Velero backups (optional)
+  ansible.builtin.command:
+    cmd: "velero backup delete --all --confirm"
+  when:
+    - delete_backups | default(false)
+    - velero_helm_info.status is defined
+  changed_when: true
+  failed_when: false
+
+- name: Delete all Velero restores (optional)
+  ansible.builtin.command:
+    cmd: "velero restore delete --all --confirm"
+  when:
+    - delete_restores | default(false)
+    - velero_helm_info.status is defined
+  changed_when: true
+  failed_when: false
+
+- name: Uninstall Velero using Helm
+  kubernetes.core.helm:
+    name: velero
+    release_namespace: "{{ velero_namespace }}"
+    state: absent
+    wait: true
+    timeout: 5m0s
+  when: velero_helm_info.status is defined
+
+- name: Delete Velero CRDs
+  ansible.builtin.command:
+    cmd: "kubectl delete crd -l component=velero"
+  changed_when: true
+  failed_when: false
+
+- name: Delete Velero namespace
+  kubernetes.core.k8s:
+    state: absent
+    kind: Namespace
+    name: "{{ velero_namespace }}"
+    wait: true
+    wait_timeout: 120
+  when: delete_namespace | default(true)
+
+- name: Remove Velero Helm repository (optional)
+  kubernetes.core.helm_repository:
+    name: vmware-tanzu
+    state: absent
+  when: remove_helm_repo | default(false)
+
+- name: Velero uninstall complete
+  ansible.builtin.debug:
+    msg: |
+      Velero has been uninstalled from cluster '{{ cluster_name }}'.
+      - Helm release: removed
+      - CRDs: removed
+      - Namespace: {{ 'removed' if delete_namespace | default(true) else 'preserved' }}
+      - Backups in S3: preserved (delete manually if needed)

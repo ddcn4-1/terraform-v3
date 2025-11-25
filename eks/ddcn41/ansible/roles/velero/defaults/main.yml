@@ -1,0 +1,22 @@
+# Velero defaults
+velero_namespace: velero
+velero_version: "1.14.0"
+velero_plugin_version: "1.10.0"
+
+# AWS Configuration
+aws_region: "{{ region | default('ap-northeast-2') }}"
+
+# Backup settings
+backup_ttl: "720h"  # 30 days
+backup_wait_timeout: 600  # 10 minutes
+
+# Restore settings
+restore_wait_timeout: 1800  # 30 minutes
+
+# Helm settings
+velero_helm_repo: "https://vmware-tanzu.github.io/helm-charts"
+velero_helm_chart_version: "7.2.1"
+
+# Cleanup settings
+cleanup_after_restore: true
+cleanup_delay_seconds: 60

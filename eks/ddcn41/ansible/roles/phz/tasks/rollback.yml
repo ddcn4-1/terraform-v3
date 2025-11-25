@@ -1,0 +1,120 @@
+---
+# PHZ Rollback Tasks - Rollback DNS records to previous values
+#
+# Variables required:
+#   - phz_zone_id: Route53 Private Hosted Zone ID
+#   - phz_domain: Domain name (e.g., ticket-hs.internal)
+#   - rollback_rds_endpoint: Previous RDS endpoint
+#   - rollback_redis_endpoint: Previous Redis endpoint
+
+- name: Validate rollback endpoints are provided
+  ansible.builtin.assert:
+    that:
+      - rollback_rds_endpoint is defined or rollback_redis_endpoint is defined
+    fail_msg: "At least one rollback endpoint must be provided"
+
+- name: Display rollback plan
+  ansible.builtin.debug:
+    msg: |
+      ╔════════════════════════════════════════════════════════════════╗
+      ║              PHZ DNS ROLLBACK                                  ║
+      ╠════════════════════════════════════════════════════════════════╣
+      ║  Zone ID: {{ phz_zone_id }}
+      ║  Domain:  {{ phz_domain }}
+      ╠════════════════════════════════════════════════════════════════╣
+      ║  Rolling back to:                                              ║
+      ║    RDS:   {{ rollback_rds_endpoint | default('N/A') }}
+      ║    Redis: {{ rollback_redis_endpoint | default('N/A') }}
+      ╚════════════════════════════════════════════════════════════════╝
+
+- name: Confirm rollback
+  ansible.builtin.pause:
+    prompt: "Press Enter to proceed with rollback or Ctrl+C to abort"
+  when: not (auto_confirm | default(false))
+
+- name: Create Route53 rollback batch for RDS
+  ansible.builtin.copy:
+    content: |
+      {
+        "Comment": "DR Rollback - Restore RDS endpoint",
+        "Changes": [
+          {
+            "Action": "UPSERT",
+            "ResourceRecordSet": {
+              "Name": "db.{{ phz_domain }}",
+              "Type": "CNAME",
+              "TTL": {{ dns_ttl | default(300) }},
+              "ResourceRecords": [
+                {
+                  "Value": "{{ rollback_rds_endpoint }}"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    dest: /tmp/phz-rds-rollback-batch.json
+    mode: "0644"
+  when: rollback_rds_endpoint is defined and rollback_rds_endpoint | length > 0
+
+- name: Create Route53 rollback batch for Redis
+  ansible.builtin.copy:
+    content: |
+      {
+        "Comment": "DR Rollback - Restore Redis endpoint",
+        "Changes": [
+          {
+            "Action": "UPSERT",
+            "ResourceRecordSet": {
+              "Name": "redis.{{ phz_domain }}",
+              "Type": "CNAME",
+              "TTL": {{ dns_ttl | default(300) }},
+              "ResourceRecords": [
+                {
+                  "Value": "{{ rollback_redis_endpoint }}"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    dest: /tmp/phz-redis-rollback-batch.json
+    mode: "0644"
+  when: rollback_redis_endpoint is defined and rollback_redis_endpoint | length > 0
+
+- name: Execute RDS rollback
+  ansible.builtin.command:
+    cmd: >
+      aws route53 change-resource-record-sets
+      --hosted-zone-id {{ phz_zone_id }}
+      --change-batch file:///tmp/phz-rds-rollback-batch.json
+  when: rollback_rds_endpoint is defined and rollback_rds_endpoint | length > 0
+
+- name: Execute Redis rollback
+  ansible.builtin.command:
+    cmd: >
+      aws route53 change-resource-record-sets
+      --hosted-zone-id {{ phz_zone_id }}
+      --change-batch file:///tmp/phz-redis-rollback-batch.json
+  when: rollback_redis_endpoint is defined and rollback_redis_endpoint | length > 0
+
+- name: Wait for Route53 changes to propagate
+  ansible.builtin.pause:
+    seconds: "{{ dns_propagation_wait | default(30) }}"
+    prompt: "Waiting {{ dns_propagation_wait | default(30) }}s for DNS propagation..."
+
+- name: Cleanup temp files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /tmp/phz-rds-rollback-batch.json
+    - /tmp/phz-redis-rollback-batch.json
+  failed_when: false
+
+- name: Display rollback completion
+  ansible.builtin.debug:
+    msg: |
+      ╔════════════════════════════════════════════════════════════════╗
+      ║              PHZ DNS ROLLBACK COMPLETED                        ║
+      ╚════════════════════════════════════════════════════════════════╝

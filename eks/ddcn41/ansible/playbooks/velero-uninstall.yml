@@ -1,0 +1,45 @@
+---
+# Velero Uninstall Playbook
+# Usage: ansible-playbook playbooks/velero-uninstall.yml -e "target=tokyo"
+#        ansible-playbook playbooks/velero-uninstall.yml -e "target=tokyo delete_backups=true"
+
+- name: Uninstall Velero from EKS Cluster
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    action: uninstall
+    # Lookup cluster config from inventory based on target
+    _cluster_cfg: "{{ cluster_configs[target | default('tokyo')] }}"
+    region: "{{ _cluster_cfg.region }}"
+    cluster_name: "{{ _cluster_cfg.cluster_name }}"
+    velero_bucket: "{{ _cluster_cfg.velero_bucket }}"
+    is_primary: "{{ _cluster_cfg.is_primary }}"
+    velero_role_source: "{{ _cluster_cfg.velero_role_source }}"
+    delete_namespace: true
+    delete_backups: false
+    delete_restores: false
+
+  pre_tasks:
+    - name: Display uninstall target
+      ansible.builtin.debug:
+        msg: |
+          Uninstalling Velero from:
+            Cluster: {{ cluster_name }}
+            Region: {{ region }}
+            Delete backups: {{ delete_backups }}
+            Delete restores: {{ delete_restores }}
+            Delete namespace: {{ delete_namespace }}
+
+    - name: Confirm uninstallation
+      ansible.builtin.pause:
+        prompt: "Press Enter to continue or Ctrl+C to abort"
+      when: not (auto_confirm | default(false))
+
+  roles:
+    - velero
+
+  post_tasks:
+    - name: Uninstall complete
+      ansible.builtin.debug:
+        msg: "Velero uninstalled from {{ cluster_name }}"
