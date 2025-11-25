@@ -40,3 +40,6 @@ data:
 
   # JPA DDL Settings
   SPRING_JPA_HIBERNATE_DDL_AUTO: {{ .Values.global.env.SPRING_JPA_HIBERNATE_DDL_AUTO | quote }}
+
+  # Spring Cloud Compatibility Fix
+  SPRING_CLOUD_COMPATIBILITY_VERIFIER_ENABLED: "false"
