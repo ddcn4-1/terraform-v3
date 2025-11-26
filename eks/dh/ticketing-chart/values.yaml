@@ -4,7 +4,7 @@ image:
   repository: 911723818289.dkr.ecr.ap-northeast-2.amazonaws.com
   pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
-  tag: "4440bbda5e1af07aa091d0721e633c8e44d81dc6"
+  tag: "69a011dcac881192f101083d26509e4d0e13d9c1"
 
 nameOverride: ""
 fullnameOverride: ""
