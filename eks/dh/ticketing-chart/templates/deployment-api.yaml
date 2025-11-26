@@ -38,6 +38,16 @@ spec:
                 configMapKeyRef:
                   name: ticketing-config
                   key: SPRING_REDIS_PORT
+            - name: JWT_BLACKLIST_REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: ticketing-config
+                  key: SPRING_REDIS_HOST
+            - name: JWT_BLACKLIST_REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: ticketing-config
+                  key: SPRING_REDIS_PORT
           resources:
             {{- toYaml .Values.resources.api | nindent 12 }}
           livenessProbe:
