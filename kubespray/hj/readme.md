@@ -22,8 +22,8 @@
 - TLS 및 Ingress 기반 도메인 라우팅(local.ddcn41.com) 재현
 - Docker Local Registry + K3d 조합으로 build → push → deploy 흐름을 빠르게 검증
 
-### 실사용 영상
-추가 예정
+### 시현 이미지
+<img width="1078" height="1920" alt="image" src="https://github.com/user-attachments/assets/85a2851d-d802-470b-9e6d-342195f7175c" />
 
 ## 2. 아키텍처 & Flow
 ### 파이프라인 흐름
