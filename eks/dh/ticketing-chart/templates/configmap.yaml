@@ -34,9 +34,11 @@ data:
   AUTH_COGNITO_ENABLED: {{ .Values.global.env.COGNITO_ENABLED | quote }}
   AUTH_COGNITO_REGION: {{ .Values.global.env.COGNITO_REGION | quote }}
 
-  # Redis Settings (Used in Admin)
+  # Redis Settings (Used in Admin and JWT Blacklist)
   REDIS_HOST_LOCAL: {{ .Values.global.env.SPRING_REDIS_HOST | quote }}
   REDIS_PORT_LOCAL: {{ .Values.global.env.SPRING_REDIS_PORT | quote }}
+  REDIS_HOST: {{ .Values.global.env.SPRING_REDIS_HOST | quote }}
+  REDIS_PORT: {{ .Values.global.env.SPRING_REDIS_PORT | quote }}
 
   # JPA DDL Settings
   SPRING_JPA_HIBERNATE_DDL_AUTO: {{ .Values.global.env.SPRING_JPA_HIBERNATE_DDL_AUTO | quote }}
