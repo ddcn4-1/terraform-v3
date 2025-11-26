@@ -1,0 +1,28 @@
+---
+- name: Bootstrap Local Environment & Deploy
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    kube_config: "~/.kube/config"
+    argocd_app_path: "../eks/dh/argocd/monitoring-app.yaml"
+
+  tasks:
+    - name: Check if kubectl is installed
+      command: which kubectl
+      register: kubectl_check
+      ignore_errors: yes
+
+    - name: Fail if kubectl is missing
+      fail:
+        msg: "kubectl is not installed. Please install it first."
+      when: kubectl_check.rc != 0
+
+    - name: Apply Monitoring Application via kubectl
+      command: "kubectl apply -f {{ argocd_app_path }}"
+      register: apply_result
+      changed_when: "'created' in apply_result.stdout or 'configured' in apply_result.stdout"
+
+    - name: Display Apply Result
+      debug:
+        msg: "{{ apply_result.stdout }}"

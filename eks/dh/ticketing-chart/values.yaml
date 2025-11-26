@@ -99,6 +99,8 @@ global:
     COGNITO_ENABLED: "true"
     COGNITO_REGION: "ap-northeast-2"
     SPRING_JPA_HIBERNATE_DDL_AUTO: "update"
+    MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "health,info,prometheus"
+    MANAGEMENT_METRICS_TAGS_APPLICATION: "${spring.application.name}"
 
 apps:
   api:
