@@ -1,0 +1,48 @@
+---
+# RDS Backup Playbook - Create snapshot and optionally copy to Tokyo
+#
+# Usage:
+#   # Create snapshot only
+#   ansible-playbook playbooks/rds-backup.yml
+#
+#   # Create snapshot with custom name
+#   ansible-playbook playbooks/rds-backup.yml -e "snapshot_name=my-backup"
+#
+#   # Create snapshot and copy to Tokyo
+#   ansible-playbook playbooks/rds-backup.yml -e "copy_to_tokyo=true"
+
+- name: RDS Backup (Snapshot)
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    copy_to_tokyo: false
+    skip_snapshot: false
+
+  tasks:
+    - name: Display backup info
+      ansible.builtin.debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════════╗
+          ║              RDS BACKUP (SNAPSHOT)                             ║
+          ╠════════════════════════════════════════════════════════════════╣
+          ║  Source DB: {{ rds_identifier | default('ddcn41-eks-db') }}
+          ║  Region:    ap-northeast-2 (Seoul)
+          ║  Snapshot:  {{ snapshot_name | default('auto-generated') }}
+          ║  Skip Snapshot: {{ skip_snapshot }}
+          ║  Copy to Tokyo: {{ copy_to_tokyo }}
+          ╚════════════════════════════════════════════════════════════════╝
+
+    - name: Create RDS snapshot
+      ansible.builtin.include_role:
+        name: aws-backup
+      vars:
+        action: snapshot
+      when: not (skip_snapshot | bool)
+
+    - name: Copy to Tokyo
+      ansible.builtin.include_role:
+        name: aws-backup
+      vars:
+        action: copy
+      when: copy_to_tokyo | bool

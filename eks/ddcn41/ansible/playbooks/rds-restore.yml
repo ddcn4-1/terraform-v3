@@ -1,0 +1,33 @@
+---
+# RDS Restore Playbook - Restore from snapshot in Tokyo
+#
+# Usage:
+#   # Restore from snapshot
+#   ansible-playbook playbooks/rds-restore.yml -e "snapshot_name=dr-snapshot-2024-01-01-tokyo"
+#
+#   # Restore with custom DB name
+#   ansible-playbook playbooks/rds-restore.yml -e "snapshot_name=xxx restored_db_identifier=my-db"
+
+- name: RDS Restore from Snapshot
+  hosts: localhost
+  gather_facts: true
+
+  pre_tasks:
+    - name: Validate snapshot_name
+      ansible.builtin.assert:
+        that:
+          - snapshot_name is defined
+          - snapshot_name | length > 0
+        fail_msg: |
+          snapshot_name is required!
+          Usage: ansible-playbook playbooks/rds-restore.yml -e "snapshot_name=your-snapshot"
+
+          List available snapshots:
+            make rds-list-snapshots
+
+  tasks:
+    - name: Restore RDS from snapshot
+      ansible.builtin.include_role:
+        name: aws-backup
+      vars:
+        action: restore

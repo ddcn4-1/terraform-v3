@@ -1,0 +1,63 @@
+---
+# Create RDS snapshot in Seoul
+- name: Generate snapshot name
+  ansible.builtin.set_fact:
+    snapshot_name: "{{ snapshot_prefix | default('dr-snapshot') }}-{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}"
+  when: snapshot_name is not defined
+
+- name: Display snapshot plan
+  ansible.builtin.debug:
+    msg: |
+      ╔════════════════════════════════════════════════════════════════╗
+      ║              RDS SNAPSHOT CREATION                             ║
+      ╠════════════════════════════════════════════════════════════════╣
+      ║  Source DB:     {{ rds_identifier }}
+      ║  Region:        {{ seoul_region }}
+      ║  Snapshot Name: {{ snapshot_name }}
+      ╚════════════════════════════════════════════════════════════════╝
+
+- name: Create RDS snapshot
+  ansible.builtin.command:
+    cmd: >
+      aws rds create-db-snapshot
+      --db-instance-identifier {{ rds_identifier }}
+      --db-snapshot-identifier {{ snapshot_name }}
+      --region {{ seoul_region }}
+  register: snapshot_result
+  changed_when: true
+
+- name: Wait for snapshot to be available
+  ansible.builtin.command:
+    cmd: >
+      aws rds wait db-snapshot-available
+      --db-snapshot-identifier {{ snapshot_name }}
+      --region {{ seoul_region }}
+  register: wait_result
+  changed_when: false
+
+- name: Get snapshot details
+  ansible.builtin.command:
+    cmd: >
+      aws rds describe-db-snapshots
+      --db-snapshot-identifier {{ snapshot_name }}
+      --region {{ seoul_region }}
+      --query 'DBSnapshots[0].{Identifier:DBSnapshotIdentifier,Status:Status,ARN:DBSnapshotArn,Size:AllocatedStorage}'
+      --output json
+  register: snapshot_details
+  changed_when: false
+
+- name: Display snapshot result
+  ansible.builtin.debug:
+    msg: |
+      ✅ Snapshot created successfully!
+
+      {{ snapshot_details.stdout | from_json | to_nice_yaml }}
+
+      Snapshot ARN: {{ (snapshot_details.stdout | from_json).ARN }}
+
+      To copy to Tokyo:
+        make rds-copy-tokyo SNAPSHOT={{ snapshot_name }}
+
+- name: Set snapshot ARN fact
+  ansible.builtin.set_fact:
+    snapshot_arn: "{{ (snapshot_details.stdout | from_json).ARN }}"

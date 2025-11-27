@@ -69,7 +69,7 @@
   block:
     - name: Set restore name
       ansible.builtin.set_fact:
-        restore_name: "dr-failover-{{ ansible_date_time.iso8601_basic_short }}"
+        restore_name: "dr-failover-{{ ansible_date_time.iso8601_basic_short | lower }}"
 
     - name: Create restore from backup
       ansible.builtin.command:

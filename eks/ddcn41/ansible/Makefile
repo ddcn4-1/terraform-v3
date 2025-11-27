@@ -52,14 +52,26 @@ help: ## Show this help
 	@echo "  make tokyo-uninstall   Uninstall Velero from Tokyo"
 	@echo ""
 	@echo "$(GREEN)DR Operations:$(NC)"
+	@echo "  make dr-status         Show comprehensive DR status dashboard"
 	@echo "  make dr-failover BACKUP=name    Full DR failover to Tokyo"
 	@echo "  make dr-failover-auto BACKUP=name  DR failover (no prompts)"
+	@echo "  make dr-failback       Full failback to Seoul (backup+restore+DNS)"
+	@echo "  make dr-failback-rds   Full failback with RDS snapshot"
+	@echo "  make dr-failback-dns-only  Quick failback (DNS only)"
+	@echo "  make tokyo-cleanup     Clean up Tokyo resources (delete namespace)"
 	@echo "  make dr-test           Run full DR test scenario"
 	@echo ""
 	@echo "$(GREEN)PHZ (DNS) Operations:$(NC)"
 	@echo "  make phz-tokyo         Switch DNS to Tokyo endpoints"
 	@echo "  make phz-seoul         Switch DNS to Seoul endpoints (rollback)"
 	@echo "  make phz-verify        Verify current PHZ DNS records"
+	@echo ""
+	@echo "$(GREEN)RDS Snapshot Operations:$(NC)"
+	@echo "  make rds-snapshot NAME=name       Create RDS snapshot in Seoul"
+	@echo "  make rds-snapshot-copy NAME=name  Create snapshot + copy to Tokyo"
+	@echo "  make rds-copy-tokyo SNAPSHOT=name Copy existing snapshot to Tokyo"
+	@echo "  make rds-restore-tokyo SNAPSHOT=name  Restore snapshot in Tokyo"
+	@echo "  make rds-list-snapshots           List all RDS snapshots"
 	@echo ""
 	@echo "$(GREEN)Examples:$(NC)"
 	@echo "  make install                     # 양쪽 클러스터에 Velero 설치"
@@ -156,7 +168,15 @@ ifndef BACKUP
 	@exit 1
 endif
 	@echo "$(BLUE)Restoring '$(BACKUP)' to Tokyo...$(NC)"
-	ansible-playbook $(PLAYBOOK_DIR)/velero-restore.yml -e "target=tokyo backup_name=$(BACKUP)"
+	@DIGEST_FILE="$(ANSIBLE_DIR)/image-digests-$(BACKUP).yml"; \
+	if [ -f "$$DIGEST_FILE" ]; then \
+		echo "$(GREEN)Found image digests file: $$DIGEST_FILE$(NC)"; \
+		ansible-playbook $(PLAYBOOK_DIR)/velero-restore.yml -e "target=tokyo backup_name=$(BACKUP)" -e "@$$DIGEST_FILE"; \
+	else \
+		echo "$(YELLOW)Warning: No digest file found at $$DIGEST_FILE$(NC)"; \
+		echo "$(YELLOW)Restoring without image digest pinning...$(NC)"; \
+		ansible-playbook $(PLAYBOOK_DIR)/velero-restore.yml -e "target=tokyo backup_name=$(BACKUP)"; \
+	fi
 
 tokyo-restore-full: ## Restore full backup to Tokyo with PHZ update (BACKUP=name required)
 ifndef BACKUP
@@ -165,7 +185,14 @@ ifndef BACKUP
 	@exit 1
 endif
 	@echo "$(BLUE)Restoring '$(BACKUP)' to Tokyo...$(NC)"
-	ansible-playbook $(PLAYBOOK_DIR)/velero-restore.yml -e "target=tokyo backup_name=$(BACKUP)"
+	@DIGEST_FILE="$(ANSIBLE_DIR)/image-digests-$(BACKUP).yml"; \
+	if [ -f "$$DIGEST_FILE" ]; then \
+		echo "$(GREEN)Found image digests file: $$DIGEST_FILE$(NC)"; \
+		ansible-playbook $(PLAYBOOK_DIR)/velero-restore.yml -e "target=tokyo backup_name=$(BACKUP)" -e "@$$DIGEST_FILE"; \
+	else \
+		echo "$(YELLOW)Warning: No digest file found at $$DIGEST_FILE$(NC)"; \
+		ansible-playbook $(PLAYBOOK_DIR)/velero-restore.yml -e "target=tokyo backup_name=$(BACKUP)"; \
+	fi
 	@echo "$(BLUE)Updating PHZ DNS to Tokyo endpoints...$(NC)"
 	ansible-playbook $(PLAYBOOK_DIR)/phz-update.yml -e "target_region=tokyo auto_confirm=true"
 
@@ -209,6 +236,50 @@ dr-test: ## Run full DR test scenario
 dr-test-no-cleanup: ## Run DR test without cleanup
 	ansible-playbook $(PLAYBOOK_DIR)/dr-test.yml -e "cleanup_all=false"
 
+dr-failback: ## Full failback from Tokyo to Seoul (backup Tokyo → restore Seoul → switch DNS)
+	@echo "$(GREEN)╔══════════════════════════════════════════════════════════════════╗$(NC)"
+	@echo "$(GREEN)║                    DR FAILBACK TO SEOUL                          ║$(NC)"
+	@echo "$(GREEN)╚══════════════════════════════════════════════════════════════════╝$(NC)"
+	ansible-playbook $(PLAYBOOK_DIR)/dr-failback.yml
+
+dr-failback-auto: ## Full failback without prompts
+	ansible-playbook $(PLAYBOOK_DIR)/dr-failback.yml -e "auto_confirm=true"
+
+dr-failback-rds: ## Full failback with RDS snapshot (backup+restore+RDS+DNS)
+	@echo "$(GREEN)╔══════════════════════════════════════════════════════════════════╗$(NC)"
+	@echo "$(GREEN)║           DR FAILBACK TO SEOUL (WITH RDS)                        ║$(NC)"
+	@echo "$(GREEN)╚══════════════════════════════════════════════════════════════════╝$(NC)"
+	ansible-playbook $(PLAYBOOK_DIR)/dr-failback.yml -e "include_rds=true"
+
+dr-failback-rds-auto: ## Full failback with RDS (no prompts)
+	ansible-playbook $(PLAYBOOK_DIR)/dr-failback.yml -e "include_rds=true auto_confirm=true"
+
+dr-failback-dns-only: ## Quick failback (DNS only, no data sync)
+	@echo "$(YELLOW)Switching DNS to Seoul (no data sync)...$(NC)"
+	@echo "$(YELLOW)Warning: Use this only if Seoul data is already up-to-date$(NC)"
+	@read -p "Proceed? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
+	@aws eks update-kubeconfig --region ap-northeast-2 --name ddcn41-eks-cluster --quiet
+	@$(MAKE) phz-seoul-auto
+	@echo "$(GREEN)✓ DNS switched to Seoul$(NC)"
+
+tokyo-cleanup: ## Clean up Tokyo DR resources (delete ticketing namespace)
+	@echo "$(RED)╔══════════════════════════════════════════════════════════════════╗$(NC)"
+	@echo "$(RED)║              ⚠️  TOKYO RESOURCE CLEANUP                           ║$(NC)"
+	@echo "$(RED)╚══════════════════════════════════════════════════════════════════╝$(NC)"
+	@echo "$(YELLOW)This will delete the ticketing namespace in Tokyo cluster$(NC)"
+	@read -p "Are you sure? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
+	@aws eks update-kubeconfig --region ap-northeast-1 --name ddcn41-eks-cluster > /dev/null 2>&1
+	@echo "$(YELLOW)Deleting ticketing namespace in Tokyo...$(NC)"
+	@kubectl delete namespace ticketing --ignore-not-found --wait=true
+	@echo "$(GREEN)✓ Tokyo ticketing namespace deleted$(NC)"
+	@kubectl get namespaces
+	@aws eks update-kubeconfig --region ap-northeast-2 --name ddcn41-eks-cluster > /dev/null 2>&1
+
+tokyo-cleanup-auto: ## Clean up Tokyo resources (no prompts)
+	@aws eks update-kubeconfig --region ap-northeast-1 --name ddcn41-eks-cluster > /dev/null 2>&1
+	@kubectl delete namespace ticketing --ignore-not-found --wait=true
+	@aws eks update-kubeconfig --region ap-northeast-2 --name ddcn41-eks-cluster > /dev/null 2>&1
+
 # ============================================================================
 # PHZ (DNS) Operations
 # ============================================================================
@@ -235,14 +306,70 @@ phz-verify: ## Verify current PHZ DNS records
 		echo ""; \
 		echo "RDS Record:"; \
 		aws route53 list-resource-record-sets --hosted-zone-id $$PHZ_ZONE_ID \
-			--query "ResourceRecordSets[?Name=='db.ddcn41.internal.']" --output table; \
+			--query "ResourceRecordSets[?Name=='db.ddcn41-eks.internal.']" --output table; \
 		echo ""; \
 		echo "Redis Record:"; \
 		aws route53 list-resource-record-sets --hosted-zone-id $$PHZ_ZONE_ID \
-			--query "ResourceRecordSets[?Name=='redis.ddcn41.internal.']" --output table; \
+			--query "ResourceRecordSets[?Name=='redis.ddcn41-eks.internal.']" --output table; \
 	else \
 		echo "$(RED)PHZ Zone ID not found. Run 'terraform apply' on Seoul first.$(NC)"; \
 	fi
+
+# ============================================================================
+# RDS Snapshot Operations
+# ============================================================================
+rds-snapshot: ## Create RDS snapshot in Seoul (NAME=name optional)
+	@echo "$(BLUE)Creating RDS snapshot in Seoul...$(NC)"
+ifdef NAME
+	ansible-playbook $(PLAYBOOK_DIR)/rds-backup.yml -e "snapshot_name=$(NAME)"
+else
+	ansible-playbook $(PLAYBOOK_DIR)/rds-backup.yml
+endif
+
+rds-snapshot-copy: ## Create RDS snapshot and copy to Tokyo (NAME=name optional)
+	@echo "$(BLUE)Creating RDS snapshot and copying to Tokyo...$(NC)"
+ifdef NAME
+	ansible-playbook $(PLAYBOOK_DIR)/rds-backup.yml -e "snapshot_name=$(NAME) copy_to_tokyo=true"
+else
+	ansible-playbook $(PLAYBOOK_DIR)/rds-backup.yml -e "copy_to_tokyo=true"
+endif
+
+rds-copy-tokyo: ## Copy existing snapshot to Tokyo (SNAPSHOT=name required)
+ifndef SNAPSHOT
+	@echo "$(RED)Error: SNAPSHOT is required$(NC)"
+	@echo "Usage: make rds-copy-tokyo SNAPSHOT=snapshot-name"
+	@exit 1
+endif
+	@echo "$(BLUE)Copying snapshot '$(SNAPSHOT)' to Tokyo...$(NC)"
+	ansible-playbook $(PLAYBOOK_DIR)/rds-backup.yml -e "snapshot_name=$(SNAPSHOT) copy_to_tokyo=true skip_snapshot=true"
+
+rds-restore-tokyo: ## Restore RDS from snapshot in Tokyo (SNAPSHOT=name required)
+ifndef SNAPSHOT
+	@echo "$(RED)Error: SNAPSHOT is required$(NC)"
+	@echo "Usage: make rds-restore-tokyo SNAPSHOT=snapshot-name"
+	@echo ""
+	@echo "List available snapshots:"
+	@echo "  make rds-list-snapshots"
+	@exit 1
+endif
+	@echo "$(BLUE)Restoring RDS from snapshot '$(SNAPSHOT)' in Tokyo...$(NC)"
+	ansible-playbook $(PLAYBOOK_DIR)/rds-restore.yml -e "snapshot_name=$(SNAPSHOT)"
+
+rds-list-snapshots: ## List all RDS snapshots (Seoul and Tokyo)
+	@echo "$(BLUE)Listing RDS snapshots...$(NC)"
+	@echo ""
+	@echo "$(GREEN)═══ Seoul Snapshots ═══$(NC)"
+	@aws rds describe-db-snapshots \
+		--db-instance-identifier ddcn41-eks-db \
+		--region ap-northeast-2 \
+		--query 'DBSnapshots[*].{Name:DBSnapshotIdentifier,Status:Status,Created:SnapshotCreateTime}' \
+		--output table 2>/dev/null || echo "No snapshots found"
+	@echo ""
+	@echo "$(GREEN)═══ Tokyo Snapshots ═══$(NC)"
+	@aws rds describe-db-snapshots \
+		--region ap-northeast-1 \
+		--query 'DBSnapshots[?contains(DBSnapshotIdentifier, `dr-`) || contains(DBSnapshotIdentifier, `ddcn41`)].{Name:DBSnapshotIdentifier,Status:Status,Created:SnapshotCreateTime}' \
+		--output table 2>/dev/null || echo "No snapshots found"
 
 # ============================================================================
 # Cleanup Operations (실패한 설치 정리)
@@ -274,8 +401,52 @@ clean-all: clean-seoul clean-tokyo ## Force cleanup Velero from both clusters
 	@echo "$(GREEN)✓ All clusters cleaned$(NC)"
 
 # ============================================================================
-# Utility Operations
+# Status & Monitoring Operations
 # ============================================================================
+dr-status: ## Show comprehensive DR status (both clusters, DNS, services)
+	@echo "$(BLUE)╔══════════════════════════════════════════════════════════════════╗$(NC)"
+	@echo "$(BLUE)║                    DR STATUS DASHBOARD                           ║$(NC)"
+	@echo "$(BLUE)╚══════════════════════════════════════════════════════════════════╝$(NC)"
+	@echo ""
+	@echo "$(GREEN)═══ PHZ DNS Status ═══$(NC)"
+	@PHZ_ZONE_ID=$$(terraform -chdir=$(ANSIBLE_DIR)/../infrastructure/environments/seoul output -raw phz_zone_id 2>/dev/null || echo ""); \
+	if [ -n "$$PHZ_ZONE_ID" ]; then \
+		RDS_TARGET=$$(aws route53 list-resource-record-sets --hosted-zone-id $$PHZ_ZONE_ID \
+			--query "ResourceRecordSets[?Name=='db.ddcn41-eks.internal.'].ResourceRecords[0].Value" --output text 2>/dev/null); \
+		if echo "$$RDS_TARGET" | grep -q "ap-northeast-1"; then \
+			echo "  Current Target: $(RED)TOKYO (DR Mode)$(NC)"; \
+		else \
+			echo "  Current Target: $(GREEN)SEOUL (Normal)$(NC)"; \
+		fi; \
+		echo "  RDS Endpoint:   $$RDS_TARGET"; \
+	else \
+		echo "  $(YELLOW)PHZ not configured$(NC)"; \
+	fi
+	@echo ""
+	@echo "$(GREEN)═══ Seoul Cluster ═══$(NC)"
+	@aws eks update-kubeconfig --region ap-northeast-2 --name ddcn41-eks-cluster 2>/dev/null; \
+	if kubectl get nodes --no-headers 2>/dev/null | head -1 > /dev/null; then \
+		echo "  Status: $(GREEN)Connected$(NC)"; \
+		echo "  Nodes:  $$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ') ready"; \
+		echo "  Pods:   $$(kubectl get pods -n ticketing --no-headers 2>/dev/null | grep -c Running || echo 0) running in ticketing"; \
+	else \
+		echo "  Status: $(RED)Not accessible$(NC)"; \
+	fi
+	@echo ""
+	@echo "$(GREEN)═══ Tokyo Cluster ═══$(NC)"
+	@aws eks update-kubeconfig --region ap-northeast-1 --name ddcn41-eks-cluster 2>/dev/null; \
+	if kubectl get nodes --no-headers 2>/dev/null | head -1 > /dev/null; then \
+		echo "  Status: $(GREEN)Connected$(NC)"; \
+		echo "  Nodes:  $$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ') ready"; \
+		echo "  Pods:   $$(kubectl get pods -n ticketing --no-headers 2>/dev/null | grep -c Running || echo 0) running in ticketing"; \
+	else \
+		echo "  Status: $(RED)Not accessible$(NC)"; \
+	fi
+	@echo ""
+	@echo "$(GREEN)═══ Recent Velero Backups (Tokyo) ═══$(NC)"
+	@velero backup get --sort-by=.metadata.creationTimestamp 2>/dev/null | tail -5 || echo "  No backups found"
+	@echo ""
+
 status: ## Show Velero status on current cluster
 	@echo "$(BLUE)Velero Status:$(NC)"
 	@velero version 2>/dev/null || echo "Velero not installed or not connected"

@@ -1,0 +1,17 @@
+---
+# AWS Backup main tasks - route to specific action
+- name: Include snapshot tasks
+  ansible.builtin.include_tasks: snapshot.yml
+  when: action == 'snapshot'
+
+- name: Include copy tasks
+  ansible.builtin.include_tasks: copy.yml
+  when: action == 'copy'
+
+- name: Include restore tasks
+  ansible.builtin.include_tasks: restore.yml
+  when: action == 'restore'
+
+- name: Include list tasks
+  ansible.builtin.include_tasks: list.yml
+  when: action == 'list'

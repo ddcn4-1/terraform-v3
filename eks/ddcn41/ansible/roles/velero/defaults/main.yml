@@ -20,3 +20,22 @@ velero_helm_chart_version: "7.2.1"
 # Cleanup settings
 cleanup_after_restore: true
 cleanup_delay_seconds: 60
+
+# Resource Modifiers (for DR restore)
+# 복원 시 이미지 digest를 고정하여 서울과 동일한 이미지 사용
+use_resource_modifiers: true
+resource_modifier_configmap: "restore-resource-modifiers"
+
+# 이미지 digest 목록 (서울 클러스터에서 실행 중인 이미지)
+# 이 값들은 backup 시 자동으로 수집되거나 수동으로 업데이트
+image_digests: []
+# 예시:
+# image_digests:
+#   - name: ticketing-api
+#     namespace: ticketing
+#     image: 911723818289.dkr.ecr.ap-northeast-2.amazonaws.com/guk/ticketing-api
+#     digest: sha256:5b4c86c40c20434ad41545b6b3289ccbca1c94b566e478e25a218d8feac19ecc
+#   - name: ticketing-admin
+#     namespace: ticketing
+#     image: 911723818289.dkr.ecr.ap-northeast-2.amazonaws.com/guk/ticketing-admin
+#     digest: sha256:297d78582be3dba21cf68763c22ce42f6c98140a415e11db59876e117a6094cb

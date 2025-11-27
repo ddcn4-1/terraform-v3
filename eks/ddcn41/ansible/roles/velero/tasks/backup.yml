@@ -64,3 +64,54 @@
   ansible.builtin.debug:
     msg: "{{ backup_logs.stdout_lines }}"
   when: show_logs | default(false)
+
+# 이미지 digest 수집 (DR 복원 시 사용)
+- name: Collect image digests from running pods
+  ansible.builtin.shell: |
+    for ns in {{ collect_digest_namespaces | default(['ticketing']) | join(' ') }}; do
+      kubectl get pods -n "$ns" -o json 2>/dev/null | jq -r --arg ns "$ns" '
+        .items[] |
+        select(.status.containerStatuses != null) |
+        .status.containerStatuses[] |
+        select(.imageID | contains("@sha256:")) |
+        {
+          name: .name,
+          namespace: $ns,
+          image: .image,
+          digest: (.imageID | split("@")[1])
+        }
+      ' 2>/dev/null
+    done | jq -s '.'
+  register: pod_images_json
+  changed_when: false
+  when: collect_image_digests | default(true)
+
+- name: Set collected image digests
+  ansible.builtin.set_fact:
+    collected_image_digests: "{{ pod_images_json.stdout | from_json }}"
+  when:
+    - collect_image_digests | default(true)
+    - pod_images_json.stdout | default('') | length > 0
+
+- name: Display collected image digests
+  ansible.builtin.debug:
+    msg: |
+      Collected image digests for DR restore:
+      {{ collected_image_digests | default([]) | to_nice_yaml }}
+  when: collect_image_digests | default(true)
+
+- name: Save image digests to file
+  ansible.builtin.copy:
+    content: |
+      # Auto-generated image digests from backup
+      # Backup: {{ backup_name }}
+      # Date: {{ ansible_date_time.iso8601 }}
+      # Use these values for DR restore
+
+      image_digests:
+      {{ collected_image_digests | default([]) | to_yaml | indent(2, first=true) }}
+    dest: "{{ playbook_dir }}/../image-digests-{{ backup_name }}.yml"
+  when:
+    - collect_image_digests | default(true)
+    - save_digests_to_file | default(true)
+  delegate_to: localhost

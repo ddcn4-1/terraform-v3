@@ -1,0 +1,224 @@
+---
+# Restore RDS from snapshot in Tokyo
+# replace_existing=true 시: 기존 DB 삭제 → 복원 → rename
+- name: Validate snapshot_name is provided
+  ansible.builtin.fail:
+    msg: "snapshot_name is required for restore operation"
+  when: snapshot_name is not defined or snapshot_name == ''
+
+- name: Set variables
+  ansible.builtin.set_fact:
+    temp_db_identifier: "{{ rds_identifier }}-dr-temp"
+    target_db_identifier: "{{ rds_identifier }}"
+    replace_existing: "{{ replace_existing | default(true) }}"
+
+- name: Get Tokyo DB subnet group
+  ansible.builtin.command:
+    cmd: >
+      aws rds describe-db-subnet-groups
+      --region {{ tokyo_region }}
+      --query 'DBSubnetGroups[?contains(DBSubnetGroupName, `ddcn41`)].DBSubnetGroupName | [0]'
+      --output text
+  register: tokyo_subnet_group
+  changed_when: false
+
+- name: Display restore plan
+  ansible.builtin.debug:
+    msg: |
+      ╔════════════════════════════════════════════════════════════════╗
+      ║              RDS RESTORE FROM SNAPSHOT                         ║
+      ╠════════════════════════════════════════════════════════════════╣
+      ║  Snapshot:       {{ snapshot_name }}
+      ║  Region:         {{ tokyo_region }}
+      ║  Target DB:      {{ target_db_identifier }}
+      ║  Temp DB:        {{ temp_db_identifier }}
+      ║  Replace Mode:   {{ replace_existing }}
+      ║  Instance Class: {{ db_instance_class }}
+      ╚════════════════════════════════════════════════════════════════╝
+
+      Process:
+        1. Restore snapshot → {{ temp_db_identifier }}
+        2. Delete existing {{ target_db_identifier }}
+        3. Rename {{ temp_db_identifier }} → {{ target_db_identifier }}
+
+# Step 1: Restore to temp DB
+- name: Check if temp DB already exists
+  ansible.builtin.command:
+    cmd: >
+      aws rds describe-db-instances
+      --db-instance-identifier {{ temp_db_identifier }}
+      --region {{ tokyo_region }}
+  register: temp_db_exists
+  changed_when: false
+  failed_when: false
+
+- name: Delete existing temp DB if exists
+  ansible.builtin.command:
+    cmd: >
+      aws rds delete-db-instance
+      --db-instance-identifier {{ temp_db_identifier }}
+      --skip-final-snapshot
+      --region {{ tokyo_region }}
+  when: temp_db_exists.rc == 0
+  register: delete_temp
+  changed_when: true
+
+- name: Wait for temp DB deletion
+  ansible.builtin.command:
+    cmd: >
+      aws rds wait db-instance-deleted
+      --db-instance-identifier {{ temp_db_identifier }}
+      --region {{ tokyo_region }}
+  when: temp_db_exists.rc == 0 and delete_temp is changed
+  changed_when: false
+
+- name: Restore snapshot to temp DB
+  ansible.builtin.command:
+    cmd: >
+      aws rds restore-db-instance-from-db-snapshot
+      --db-instance-identifier {{ temp_db_identifier }}
+      --db-snapshot-identifier {{ snapshot_name }}
+      --db-instance-class {{ db_instance_class }}
+      --db-subnet-group-name {{ tokyo_subnet_group.stdout }}
+      --no-publicly-accessible
+      --region {{ tokyo_region }}
+  register: restore_result
+  changed_when: true
+
+- name: Wait for temp DB to be available
+  ansible.builtin.debug:
+    msg: "⏳ Waiting for restored DB to be available (5-10 minutes)..."
+
+- name: Wait for temp DB ready
+  ansible.builtin.command:
+    cmd: >
+      aws rds wait db-instance-available
+      --db-instance-identifier {{ temp_db_identifier }}
+      --region {{ tokyo_region }}
+  changed_when: false
+
+- name: Temp DB restore complete
+  ansible.builtin.debug:
+    msg: "✅ Step 1 complete: {{ temp_db_identifier }} restored"
+
+# Step 2: Delete existing target DB
+- name: Check if target DB exists
+  ansible.builtin.command:
+    cmd: >
+      aws rds describe-db-instances
+      --db-instance-identifier {{ target_db_identifier }}
+      --region {{ tokyo_region }}
+  register: target_db_exists
+  changed_when: false
+  failed_when: false
+
+- name: Delete existing target DB
+  ansible.builtin.command:
+    cmd: >
+      aws rds delete-db-instance
+      --db-instance-identifier {{ target_db_identifier }}
+      --skip-final-snapshot
+      --region {{ tokyo_region }}
+  when:
+    - replace_existing | bool
+    - target_db_exists.rc == 0
+  register: delete_target
+  changed_when: true
+
+- name: Wait for target DB deletion
+  ansible.builtin.command:
+    cmd: >
+      aws rds wait db-instance-deleted
+      --db-instance-identifier {{ target_db_identifier }}
+      --region {{ tokyo_region }}
+  when: delete_target is changed
+  changed_when: false
+
+- name: Target DB deleted
+  ansible.builtin.debug:
+    msg: "✅ Step 2 complete: {{ target_db_identifier }} deleted"
+  when: delete_target is changed
+
+# Step 3: Rename temp DB to target DB
+- name: Rename temp DB to target DB
+  ansible.builtin.command:
+    cmd: >
+      aws rds modify-db-instance
+      --db-instance-identifier {{ temp_db_identifier }}
+      --new-db-instance-identifier {{ target_db_identifier }}
+      --apply-immediately
+      --region {{ tokyo_region }}
+  register: rename_result
+  changed_when: true
+
+- name: Wait for rename to complete
+  ansible.builtin.debug:
+    msg: "⏳ Waiting for DB rename (2-5 minutes)..."
+
+- name: Wait for renamed DB to be available
+  ansible.builtin.command:
+    cmd: >
+      aws rds wait db-instance-available
+      --db-instance-identifier {{ target_db_identifier }}
+      --region {{ tokyo_region }}
+  changed_when: false
+  retries: 3
+  delay: 30
+  register: wait_rename
+  until: wait_rename.rc == 0
+
+- name: Get Tokyo RDS security group
+  ansible.builtin.command:
+    cmd: >
+      aws ec2 describe-security-groups
+      --filters "Name=group-name,Values=*rds*"
+      --region {{ tokyo_region }}
+      --query 'SecurityGroups[0].GroupId'
+      --output text
+  register: tokyo_rds_sg
+  changed_when: false
+
+- name: Update security group for restored DB
+  ansible.builtin.command:
+    cmd: >
+      aws rds modify-db-instance
+      --db-instance-identifier {{ target_db_identifier }}
+      --vpc-security-group-ids {{ tokyo_rds_sg.stdout }}
+      --apply-immediately
+      --region {{ tokyo_region }}
+  when: tokyo_rds_sg.stdout != ""
+  changed_when: true
+
+- name: Wait for security group update
+  ansible.builtin.pause:
+    seconds: 10
+  when: tokyo_rds_sg.stdout != ""
+
+- name: Get final DB endpoint
+  ansible.builtin.command:
+    cmd: >
+      aws rds describe-db-instances
+      --db-instance-identifier {{ target_db_identifier }}
+      --region {{ tokyo_region }}
+      --query 'DBInstances[0].Endpoint.Address'
+      --output text
+  register: final_db_endpoint
+  changed_when: false
+
+- name: Display restore result
+  ansible.builtin.debug:
+    msg: |
+      ╔════════════════════════════════════════════════════════════════╗
+      ║              ✅ RDS RESTORE & RENAME COMPLETED                 ║
+      ╠════════════════════════════════════════════════════════════════╣
+      ║  DB Identifier: {{ target_db_identifier }}
+      ║  Endpoint:      {{ final_db_endpoint.stdout }}
+      ║  Region:        {{ tokyo_region }}
+      ╚════════════════════════════════════════════════════════════════╝
+
+      PHZ DNS (db.ddcn41-eks.internal) should now work automatically
+      if it points to: {{ target_db_identifier }}.*.rds.amazonaws.com
+
+- name: Set restored endpoint fact
+  ansible.builtin.set_fact:
+    restored_db_endpoint: "{{ final_db_endpoint.stdout }}"

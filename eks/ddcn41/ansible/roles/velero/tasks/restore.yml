@@ -43,6 +43,14 @@
   ansible.builtin.set_fact:
     restore_name: "{{ restore_name | default('restore-' + backup_name + '-' + ansible_date_time.epoch) }}"
 
+- name: Create Resource Modifiers ConfigMap
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'resource-modifiers.yml.j2') | from_yaml }}"
+  when:
+    - use_resource_modifiers | default(true)
+    - image_digests | default([]) | length > 0
+
 - name: Create Velero restore
   ansible.builtin.command:
     cmd: >
@@ -56,6 +64,9 @@
       {% endif %}
       {% if namespace_mappings is defined %}
       --namespace-mappings {{ namespace_mappings }}
+      {% endif %}
+      {% if use_resource_modifiers | default(true) and image_digests | default([]) | length > 0 %}
+      --resource-modifier-configmap {{ resource_modifier_configmap }}
       {% endif %}
       --wait
   register: restore_result

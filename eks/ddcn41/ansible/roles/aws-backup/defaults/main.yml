@@ -1,0 +1,13 @@
+# AWS Backup (RDS Snapshot) - AWS CLI based
+---
+# Regions
+seoul_region: ap-northeast-2
+tokyo_region: ap-northeast-1
+
+# RDS settings
+rds_identifier: ddcn41-eks-db
+db_instance_class: db.t3.micro
+
+# Terraform directories (read-only, for outputs)
+terraform_seoul_dir: "{{ playbook_dir }}/../../infrastructure/environments/seoul"
+terraform_tokyo_dir: "{{ playbook_dir }}/../../infrastructure/environments/tokyo"

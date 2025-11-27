@@ -1,0 +1,89 @@
+---
+# Copy RDS snapshot from Seoul to Tokyo
+- name: Validate snapshot_name is provided
+  ansible.builtin.fail:
+    msg: "snapshot_name is required for copy operation"
+  when: snapshot_name is not defined or snapshot_name == ''
+
+- name: Get source snapshot ARN
+  ansible.builtin.command:
+    cmd: >
+      aws rds describe-db-snapshots
+      --db-snapshot-identifier {{ snapshot_name }}
+      --region {{ seoul_region }}
+      --query 'DBSnapshots[0].DBSnapshotArn'
+      --output text
+  register: source_snapshot_arn
+  changed_when: false
+
+- name: Set target snapshot name
+  ansible.builtin.set_fact:
+    target_snapshot_name: "{{ snapshot_name }}-tokyo"
+  when: target_snapshot_name is not defined
+
+- name: Display copy plan
+  ansible.builtin.debug:
+    msg: |
+      ╔════════════════════════════════════════════════════════════════╗
+      ║              RDS SNAPSHOT CROSS-REGION COPY                    ║
+      ╠════════════════════════════════════════════════════════════════╣
+      ║  Source:  {{ snapshot_name }} ({{ seoul_region }})
+      ║  Target:  {{ target_snapshot_name }} ({{ tokyo_region }})
+      ╚════════════════════════════════════════════════════════════════╝
+
+- name: Get Tokyo RDS KMS key
+  ansible.builtin.command:
+    cmd: >
+      aws kms describe-key
+      --key-id alias/aws/rds
+      --region {{ tokyo_region }}
+      --query 'KeyMetadata.Arn'
+      --output text
+  register: tokyo_kms_key
+  changed_when: false
+
+- name: Copy snapshot to Tokyo
+  ansible.builtin.command:
+    cmd: >
+      aws rds copy-db-snapshot
+      --source-db-snapshot-identifier {{ source_snapshot_arn.stdout }}
+      --target-db-snapshot-identifier {{ target_snapshot_name }}
+      --source-region {{ seoul_region }}
+      --kms-key-id {{ tokyo_kms_key.stdout }}
+      --region {{ tokyo_region }}
+  register: copy_result
+  changed_when: true
+
+- name: Wait for copy to complete
+  ansible.builtin.debug:
+    msg: "Waiting for snapshot copy to complete (this may take several minutes)..."
+
+- name: Wait for copied snapshot to be available
+  ansible.builtin.command:
+    cmd: >
+      aws rds wait db-snapshot-available
+      --db-snapshot-identifier {{ target_snapshot_name }}
+      --region {{ tokyo_region }}
+  register: wait_result
+  changed_when: false
+
+- name: Get copied snapshot details
+  ansible.builtin.command:
+    cmd: >
+      aws rds describe-db-snapshots
+      --db-snapshot-identifier {{ target_snapshot_name }}
+      --region {{ tokyo_region }}
+      --query 'DBSnapshots[0].{Identifier:DBSnapshotIdentifier,Status:Status,ARN:DBSnapshotArn}'
+      --output json
+  register: copied_snapshot_details
+  changed_when: false
+
+- name: Display copy result
+  ansible.builtin.debug:
+    msg: |
+      ✅ Snapshot copied to Tokyo successfully!
+
+      {{ copied_snapshot_details.stdout | from_json | to_nice_yaml }}
+
+      To restore in Tokyo:
+        make rds-restore-tokyo SNAPSHOT={{ target_snapshot_name }}

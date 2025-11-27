@@ -1,0 +1,281 @@
+---
+# DR Failback Playbook - Tokyo에서 Seoul로 복구
+#
+# Failover의 반대 작업:
+# 1. Tokyo RDS 스냅샷 생성 및 Seoul로 복사 (선택적)
+# 2. Tokyo에서 Velero 백업 생성
+# 3. Seoul에서 Velero 백업 복원
+# 4. Seoul에서 RDS 스냅샷 복원 (선택적)
+# 5. PHZ DNS를 Seoul로 전환
+# 6. Seoul 서비스 검증
+#
+# Usage:
+#   ansible-playbook playbooks/dr-failback.yml
+#   ansible-playbook playbooks/dr-failback.yml -e "auto_confirm=true"
+#   ansible-playbook playbooks/dr-failback.yml -e "skip_velero_backup=true"  # Velero 백업 스킵
+#   ansible-playbook playbooks/dr-failback.yml -e "include_rds=true"  # RDS 스냅샷 포함
+
+- name: DR Failback - Restore Tokyo to Seoul
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    auto_confirm: false
+    skip_velero_backup: false
+    include_rds: false
+    backup_name: "failback-{{ ansible_date_time.epoch }}"
+    rds_snapshot_name: "failback-rds-{{ ansible_date_time.date }}"
+
+    # Cluster configs
+    seoul_region: ap-northeast-2
+    tokyo_region: ap-northeast-1
+    cluster_name: ddcn41-eks-cluster
+    rds_identifier: ddcn41-eks-db
+
+  pre_tasks:
+    - name: Display Failback Plan
+      ansible.builtin.debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════════╗
+          ║                    DR FAILBACK PLAN                            ║
+          ║                    Tokyo → Seoul                               ║
+          ╠════════════════════════════════════════════════════════════════╣
+          ║  Step 1: {{ 'Create RDS snapshot from Tokyo' if include_rds else 'Skip RDS (not included)' }}
+          ║  Step 2: Create Velero backup from Tokyo                       ║
+          ║  Step 3: Restore Velero backup to Seoul                        ║
+          ║  Step 4: {{ 'Restore RDS in Seoul' if include_rds else 'Skip RDS restore' }}
+          ║  Step 5: Switch PHZ DNS to Seoul endpoints                     ║
+          ║  Step 6: Verify Seoul services                                 ║
+          ╠════════════════════════════════════════════════════════════════╣
+          ║  Include RDS: {{ include_rds }}
+          ║  Skip Velero Backup: {{ skip_velero_backup }}
+          ║  Velero Backup Name: {{ backup_name }}
+          ╚════════════════════════════════════════════════════════════════╝
+
+    - name: Confirm failback
+      ansible.builtin.pause:
+        prompt: "Press Enter to proceed with failback or Ctrl+C to abort"
+      when: not (auto_confirm | bool)
+
+  tasks:
+    # ==========================================
+    # Step 1: RDS Snapshot (Optional)
+    # ==========================================
+    - name: Step 1 - Create RDS snapshot from Tokyo
+      when: include_rds | bool
+      block:
+        - name: Display RDS backup info
+          ansible.builtin.debug:
+            msg: "Creating RDS snapshot from Tokyo DR database..."
+
+        - name: Get Tokyo RDS identifier
+          ansible.builtin.command:
+            cmd: >
+              aws rds describe-db-instances
+              --region {{ tokyo_region }}
+              --query "DBInstances[?contains(DBInstanceIdentifier, '{{ rds_identifier }}')].DBInstanceIdentifier | [0]"
+              --output text
+          register: tokyo_rds_id
+          changed_when: false
+
+        - name: Create RDS snapshot in Tokyo
+          ansible.builtin.command:
+            cmd: >
+              aws rds create-db-snapshot
+              --db-instance-identifier {{ tokyo_rds_id.stdout }}
+              --db-snapshot-identifier {{ rds_snapshot_name }}
+              --region {{ tokyo_region }}
+          register: rds_snapshot_result
+          changed_when: true
+          when: tokyo_rds_id.stdout != "None" and tokyo_rds_id.stdout != ""
+
+        - name: Wait for RDS snapshot to be available
+          ansible.builtin.command:
+            cmd: >
+              aws rds wait db-snapshot-available
+              --db-snapshot-identifier {{ rds_snapshot_name }}
+              --region {{ tokyo_region }}
+          when: rds_snapshot_result is changed
+
+        - name: Copy RDS snapshot to Seoul
+          ansible.builtin.command:
+            cmd: >
+              aws rds copy-db-snapshot
+              --source-db-snapshot-identifier arn:aws:rds:{{ tokyo_region }}:{{ lookup('pipe', 'aws sts get-caller-identity --query Account --output text') }}:snapshot:{{ rds_snapshot_name }}
+              --target-db-snapshot-identifier {{ rds_snapshot_name }}-seoul
+              --source-region {{ tokyo_region }}
+              --region {{ seoul_region }}
+          register: rds_copy_result
+          changed_when: true
+          when: rds_snapshot_result is changed
+
+        - name: Display RDS snapshot result
+          ansible.builtin.debug:
+            msg: "✅ RDS snapshot '{{ rds_snapshot_name }}' created and copying to Seoul"
+          when: rds_snapshot_result is changed
+
+    # ==========================================
+    # Step 2: Create Velero backup from Tokyo
+    # ==========================================
+    - name: Step 2 - Create Velero backup from Tokyo
+      when: not (skip_velero_backup | bool)
+      block:
+        - name: Switch to Tokyo cluster
+          ansible.builtin.command:
+            cmd: "aws eks update-kubeconfig --region {{ tokyo_region }} --name {{ cluster_name }}"
+          changed_when: true
+
+        - name: Create Velero backup from Tokyo
+          ansible.builtin.command:
+            cmd: "velero backup create {{ backup_name }} --ttl 168h --wait"
+          register: backup_result
+          changed_when: true
+
+        - name: Display backup result
+          ansible.builtin.debug:
+            msg: "✅ Velero backup '{{ backup_name }}' created from Tokyo"
+
+        - name: Wait for S3 replication
+          ansible.builtin.pause:
+            seconds: 30
+            prompt: "Waiting for S3 replication to Seoul..."
+
+    # ==========================================
+    # Step 3: Restore Velero backup to Seoul
+    # ==========================================
+    - name: Step 3 - Restore Velero backup to Seoul
+      when: not (skip_velero_backup | bool)
+      block:
+        - name: Switch to Seoul cluster
+          ansible.builtin.command:
+            cmd: "aws eks update-kubeconfig --region {{ seoul_region }} --name {{ cluster_name }}"
+          changed_when: true
+
+        - name: Check if backup is available in Seoul
+          ansible.builtin.command:
+            cmd: "velero backup describe {{ backup_name }}"
+          register: backup_check
+          changed_when: false
+          retries: 5
+          delay: 10
+          until: backup_check.rc == 0
+
+        - name: Delete existing ticketing namespace (for clean restore)
+          ansible.builtin.command:
+            cmd: "kubectl delete namespace ticketing --ignore-not-found --wait=true"
+          register: delete_ns
+          changed_when: delete_ns.rc == 0
+          failed_when: false
+
+        - name: Restore backup to Seoul
+          ansible.builtin.command:
+            cmd: "velero restore create restore-{{ backup_name }} --from-backup {{ backup_name }} --wait"
+          register: restore_result
+          changed_when: true
+
+        - name: Display restore result
+          ansible.builtin.debug:
+            msg: "✅ Velero backup restored to Seoul"
+
+    # ==========================================
+    # Step 4: Restore RDS in Seoul (Optional)
+    # ==========================================
+    - name: Step 4 - Restore RDS in Seoul
+      when: include_rds | bool
+      block:
+        - name: Wait for RDS snapshot copy to complete
+          ansible.builtin.command:
+            cmd: >
+              aws rds wait db-snapshot-available
+              --db-snapshot-identifier {{ rds_snapshot_name }}-seoul
+              --region {{ seoul_region }}
+          changed_when: false
+
+        - name: Display RDS restore info
+          ansible.builtin.debug:
+            msg: |
+              ⚠️  RDS snapshot '{{ rds_snapshot_name }}-seoul' is ready in Seoul.
+
+              To restore, run:
+                make rds-restore-tokyo SNAPSHOT={{ rds_snapshot_name }}-seoul
+
+              Or manually:
+                aws rds restore-db-instance-from-db-snapshot \
+                  --db-instance-identifier {{ rds_identifier }}-restored \
+                  --db-snapshot-identifier {{ rds_snapshot_name }}-seoul \
+                  --region {{ seoul_region }}
+
+    # ==========================================
+    # Step 5: Switch PHZ DNS to Seoul
+    # ==========================================
+    - name: Step 5 - Switch DNS to Seoul
+      block:
+        - name: Update PHZ DNS to Seoul endpoints
+          ansible.builtin.include_role:
+            name: phz
+          vars:
+            action: update
+            target_region: seoul
+
+        - name: Display DNS switch result
+          ansible.builtin.debug:
+            msg: "✅ PHZ DNS switched to Seoul endpoints"
+
+    # ==========================================
+    # Step 6: Verify Seoul services
+    # ==========================================
+    - name: Step 6 - Verify Seoul services
+      block:
+        - name: Switch to Seoul cluster
+          ansible.builtin.command:
+            cmd: "aws eks update-kubeconfig --region {{ seoul_region }} --name {{ cluster_name }}"
+          changed_when: true
+
+        - name: Wait for pods to be ready
+          ansible.builtin.pause:
+            seconds: 30
+            prompt: "Waiting for pods to start..."
+
+        - name: Get ticketing pods status
+          ansible.builtin.command:
+            cmd: "kubectl get pods -n ticketing"
+          register: pods_status
+          changed_when: false
+          failed_when: false
+
+        - name: Display pods status
+          ansible.builtin.debug:
+            msg: |
+              ═══ Seoul Ticketing Pods ═══
+              {{ pods_status.stdout }}
+
+    # ==========================================
+    # Summary
+    # ==========================================
+    - name: Failback Summary
+      ansible.builtin.debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════════╗
+          ║              ✅ DR FAILBACK COMPLETED                          ║
+          ╠════════════════════════════════════════════════════════════════╣
+          ║  Traffic is now routed to Seoul (Primary)                      ║
+          ║                                                                ║
+          ║  DNS Endpoints:                                                ║
+          ║    db.ddcn41-eks.internal    → Seoul RDS                       ║
+          ║    redis.ddcn41-eks.internal → Seoul Redis                     ║
+          {% if include_rds | bool %}
+          ║                                                                ║
+          ║  RDS Snapshot: {{ rds_snapshot_name }}-seoul (ready in Seoul)  ║
+          {% endif %}
+          ╠════════════════════════════════════════════════════════════════╣
+          ║  Next Steps:                                                   ║
+          ║    1. Monitor Seoul services                                   ║
+          {% if include_rds | bool %}
+          ║    2. Restore RDS if needed:                                   ║
+          ║       make rds-restore-seoul SNAPSHOT={{ rds_snapshot_name }}-seoul
+          ║    3. Consider cleaning up Tokyo workloads:                    ║
+          {% else %}
+          ║    2. Consider cleaning up Tokyo workloads:                    ║
+          {% endif %}
+          ║       kubectl delete namespace ticketing (on Tokyo)            ║
+          ╚════════════════════════════════════════════════════════════════╝

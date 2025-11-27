@@ -1,0 +1,38 @@
+---
+# List RDS snapshots
+- name: List Seoul snapshots
+  ansible.builtin.command:
+    cmd: >
+      aws rds describe-db-snapshots
+      --db-instance-identifier {{ rds_identifier }}
+      --region {{ seoul_region }}
+      --query 'DBSnapshots[*].{Name:DBSnapshotIdentifier,Status:Status,Created:SnapshotCreateTime,Size:AllocatedStorage}'
+      --output table
+  register: seoul_snapshots
+  changed_when: false
+  when: list_region is not defined or list_region == 'seoul' or list_region == 'all'
+
+- name: Display Seoul snapshots
+  ansible.builtin.debug:
+    msg: |
+      ═══ Seoul Snapshots ({{ seoul_region }}) ═══
+      {{ seoul_snapshots.stdout }}
+  when: seoul_snapshots is defined and seoul_snapshots.stdout is defined
+
+- name: List Tokyo snapshots
+  ansible.builtin.command:
+    cmd: >
+      aws rds describe-db-snapshots
+      --region {{ tokyo_region }}
+      --query 'DBSnapshots[?contains(DBSnapshotIdentifier, `dr-`) || contains(DBSnapshotIdentifier, `{{ rds_identifier }}`)].{Name:DBSnapshotIdentifier,Status:Status,Created:SnapshotCreateTime,Size:AllocatedStorage}'
+      --output table
+  register: tokyo_snapshots
+  changed_when: false
+  when: list_region is not defined or list_region == 'tokyo' or list_region == 'all'
+
+- name: Display Tokyo snapshots
+  ansible.builtin.debug:
+    msg: |
+      ═══ Tokyo Snapshots ({{ tokyo_region }}) ═══
+      {{ tokyo_snapshots.stdout }}
+  when: tokyo_snapshots is defined and tokyo_snapshots.stdout is defined

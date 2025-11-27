@@ -1,0 +1,21 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: restore-resource-modifiers
+  namespace: {{ velero_namespace }}
+data:
+  restore-resource-modifiers.yaml: |
+    version: v1
+    resourceModifierRules:
+{% for app in image_digests %}
+      - conditions:
+          groupResource: deployments.apps
+          namespaces:
+            - {{ app.namespace }}
+          resourceNameRegex: "^{{ app.name }}$"
+        patches:
+          - operation: replace
+            path: "/spec/template/spec/containers/0/image"
+            value: "{{ app.image }}@{{ app.digest }}"
+{% endfor %}

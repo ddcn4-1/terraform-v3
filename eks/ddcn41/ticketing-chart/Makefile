@@ -11,19 +11,25 @@ JWT_SECRET ?= supersecretjwtkey12345678901234567890
 
 # EKS Cluster Info
 # terraform output: eks_cluster_name = "ddcn41-eks-cluster"
+# Usage: make [target] REGION=ap-northeast-1  (for Tokyo)
 CLUSTER_NAME := ddcn41-eks-cluster
-REGION := ap-northeast-2
+REGION ?= ap-northeast-2
 
 # NGINX Ingress Controller
 INGRESS_NAMESPACE := ingress-nginx
 INGRESS_RELEASE := ingress-nginx
 
-.PHONY: help config kubeconfig install upgrade uninstall status logs template dry-run ingress-install ingress-uninstall setup reset-db dump-db clean-db
+.PHONY: help config kubeconfig install upgrade uninstall status logs template dry-run ingress-install ingress-uninstall setup reset-db dump-db clean-db backup backup-status backup-sync restore \
+	velero-install velero-uninstall velero-status
 
 help:
 	@echo "Ticketing Chart Management"
 	@echo ""
-	@echo "Usage: make [target]"
+	@echo "Usage: make [target] [REGION=ap-northeast-1|ap-northeast-2]"
+	@echo ""
+	@echo "Regions:"
+	@echo "  ap-northeast-2  - Seoul (Primary, default)"
+	@echo "  ap-northeast-1  - Tokyo (DR)"
 	@echo ""
 	@echo "Targets:"
 	@echo "  setup           - Full setup: NGINX Ingress + Ticketing app (recommended for first deploy)"
@@ -41,6 +47,18 @@ help:
 	@echo "  reset-db        - Reset database to snapshot state"
 	@echo "  dump-db         - Create database dump (db-snapshot.sql)"
 	@echo "  clean-db        - Drop all tables (empty database)"
+	@echo ""
+	@echo "Velero (Simple Operations):"
+	@echo "  velero-install  - Install Velero with AWS plugin"
+	@echo "  velero-uninstall - Uninstall Velero"
+	@echo "  velero-status   - Show Velero status"
+	@echo "  backup          - Create Velero backup (full cluster, excludes kube-system/velero)"
+	@echo "  backup-status   - Show recent backups"
+	@echo "  backup-sync     - Sync backup list from S3 (for cross-region DR)"
+	@echo "  restore         - Restore from backup (usage: make restore FROM=<backup-name>)"
+	@echo ""
+	@echo "DR Workflow (use ansible/Makefile instead):"
+	@echo "  cd ../ansible && make help"
 
 config: kubeconfig
 kubeconfig:
@@ -180,6 +198,55 @@ uninstall-all: uninstall ingress-uninstall
 	@echo "Full teardown complete."
 
 # ============================================================================
+# Velero Backup/Restore (Cross-region DR)
+# ============================================================================
+# 전체 클러스터 백업 (kube-system, velero 제외)
+BACKUP_EXCLUDE_NAMESPACES := kube-system,kube-public,kube-node-lease,velero
+BACKUP_NAME ?= ticketing-backup-$(shell date +%Y%m%d-%H%M%S)
+
+backup: kubeconfig
+	@echo "=== Creating Velero backup (full cluster with cluster resources) ==="
+	@echo "Backup name: $(BACKUP_NAME)"
+	@echo "Excluding: $(BACKUP_EXCLUDE_NAMESPACES)"
+	velero backup create $(BACKUP_NAME) \
+		--exclude-namespaces $(BACKUP_EXCLUDE_NAMESPACES) \
+		--include-cluster-resources=true \
+		--wait
+	@echo ""
+	velero backup describe $(BACKUP_NAME)
+
+backup-status:
+	@echo "=== Recent Backups ==="
+	velero backup get | head -10
+
+backup-sync:
+	@echo "=== Syncing backup repository from S3 ==="
+	velero backup-location get
+	@echo ""
+	@echo "Triggering sync..."
+	kubectl -n velero annotate backupstoragelocation default \
+		velero.io/last-sync-check=$$(date +%s) --overwrite
+	@echo "Waiting for sync (10s)..."
+	@sleep 10
+	@echo ""
+	@echo "=== Updated Backup List ==="
+	velero backup get | head -15
+
+restore:
+	@if [ -z "$(FROM)" ]; then \
+		echo "Usage: make restore FROM=<backup-name>"; \
+		echo ""; \
+		echo "Available backups:"; \
+		velero backup get | head -10; \
+		exit 1; \
+	fi
+	@echo "=== Restoring from backup: $(FROM) ==="
+	velero restore create --from-backup $(FROM) --wait
+	@echo ""
+	@echo "Restore complete. Checking status..."
+	@$(MAKE) status
+
+# ============================================================================
 # Database Management (works across regions via PHZ)
 # ============================================================================
 DB_HOST := db.ddcn41-eks.internal
@@ -239,3 +306,38 @@ dump-db: kubeconfig
 	@kubectl delete pod pg-dump-job -n $(NAMESPACE)
 	@echo "Dump saved to $(DB_SNAPSHOT)"
 	@ls -lh $(DB_SNAPSHOT)
+
+# ============================================================================
+# Velero Installation
+# ============================================================================
+VELERO_BUCKET := ddcn41-eks-velero-prod-$(REGION)
+VELERO_VERSION := 1.14.0
+VELERO_AWS_PLUGIN := 1.10.0
+
+velero-install: kubeconfig
+	@echo "=== Installing Velero ($(REGION)) ==="
+	@echo "Bucket: $(VELERO_BUCKET)"
+	velero install \
+		--provider aws \
+		--plugins velero/velero-plugin-for-aws:v$(VELERO_AWS_PLUGIN) \
+		--bucket $(VELERO_BUCKET) \
+		--backup-location-config region=$(REGION) \
+		--use-node-agent \
+		--default-volumes-to-fs-backup=false \
+		--use-volume-snapshots=false \
+		--wait
+	@echo ""
+	@$(MAKE) velero-status REGION=$(REGION)
+
+velero-uninstall: kubeconfig
+	@echo "=== Uninstalling Velero ==="
+	velero uninstall --force || true
+	kubectl delete namespace velero --ignore-not-found
+	@echo "Velero uninstalled."
+
+velero-status: kubeconfig
+	@echo "=== Velero Status ==="
+	@kubectl get pods -n velero 2>/dev/null || echo "Velero not installed"
+	@echo ""
+	@velero backup-location get 2>/dev/null || echo "No backup location configured"
+

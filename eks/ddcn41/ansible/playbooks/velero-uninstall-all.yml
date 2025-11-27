@@ -46,6 +46,7 @@
       vars:
         aws_region: "{{ item.region }}"
         cluster_name: "{{ item.cluster_name }}"
+        velero_namespace: velero
         action: uninstall
       loop: "{{ clusters }}"
       loop_control:
